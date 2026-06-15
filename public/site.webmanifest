@@ -1,0 +1,21 @@
+{
+  "name": "Raatap - Community Ride Sharing",
+  "short_name": "Raatap",
+  "description": "Share rides with trusted community members. Save costs, build connections, and make your daily commute easier.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8f9fc",
+  "theme_color": "#6675FF",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

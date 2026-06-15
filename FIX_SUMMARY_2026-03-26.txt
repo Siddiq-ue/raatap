@@ -1,0 +1,61 @@
+RAATAP FIX SUMMARY
+Date: 2026-03-26
+
+Issue reported:
+- OTP/profile flow was failing with foreign key errors:
+  1) email_otps_user_id_fkey
+  2) profiles_id_fkey
+- Users on the same route were not getting matched because onboarding/profile creation was breaking before proper ride/match creation.
+
+Root cause:
+- Frontend onboarding flow was passing user?.id from component state, which can be stale/missing at submit time.
+- OTP write and profile upsert were attempted with invalid/missing user IDs.
+- OTP routes did not validate that incoming userId existed in Supabase Auth before DB writes.
+
+What I changed:
+1) Dashboard onboarding flow hardening
+   File: src/app/dashboard/DashboardContent.tsx
+   - Added getFreshUserId() to fetch current authenticated user directly from Supabase before critical actions.
+   - Added upsertProfileRecord() helper to centralize profile upserts and ensure consistent fields.
+   - In handleSendOTP():
+     - Fetch fresh user ID first.
+     - Upsert profile BEFORE calling /api/otp/send.
+     - Send OTP with verified fresh userId.
+   - In handleResendOTP():
+     - Use fresh authenticated userId.
+   - In handleVerifyOTP():
+     - Use fresh authenticated userId for /api/otp/verify.
+     - Upsert profile with email_verified=true using fresh userId.
+     - Use fresh userId when creating ride template/request.
+   - In handleRequestManualVerification():
+     - Use fresh authenticated userId.
+     - Upsert profile with email_verified=false using fresh userId.
+     - Use fresh userId for ride template/request creation.
+
+2) OTP API server-side validation
+   File: src/app/api/otp/send/route.ts
+   - Added Supabase Admin user check: auth.admin.getUserById(userId)
+   - If invalid userId/session, return 401 with clear message instead of triggering FK DB error.
+
+3) OTP verification API server-side validation
+   File: src/app/api/otp/verify/route.ts
+   - Added Supabase Admin user check: auth.admin.getUserById(userId)
+   - If invalid userId/session, return 401 with clear message.
+
+Validation performed:
+- Checked errors for changed files.
+- No TypeScript/runtime errors in changed OTP route files.
+- Dashboard still has existing style/lint suggestions unrelated to this fix.
+
+Expected impact:
+- Prevents FK failures during OTP send/verify and profile save.
+- Ensures onboarding consistently creates/updates profile tied to valid auth user.
+- Restores downstream flow needed for route-based ride creation and matching.
+
+Recommended quick test flow:
+1) Sign up/login and open dashboard.
+2) Fill profile and send OTP.
+3) Verify OTP and complete registration.
+4) Confirm profile row exists for authenticated user ID.
+5) Confirm ride_template/ride_request gets created based on preferences.
+6) Confirm match suggestions appear for same-route users.
