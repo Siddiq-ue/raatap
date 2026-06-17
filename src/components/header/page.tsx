@@ -99,7 +99,8 @@ export default function Header() {
           </span>
         </Link>
 
-        {/* Right Side - Profile */}
+        {/* Right Side - Profile (hidden on admin pages) */}
+        {!pathname.startsWith("/admin") && (
         <div className="relative" ref={dropdownRef}>
           <button
             onClick={() => setDropdownOpen(!dropdownOpen)}
@@ -338,6 +339,7 @@ export default function Header() {
             </>
           )}
         </div>
+        )}
       </div>
 
       <style jsx>{`
