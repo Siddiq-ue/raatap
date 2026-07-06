@@ -1,9 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import Map, { Source, Layer, Marker, MapRef } from "react-map-gl/maplibre";
-import maplibregl from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
+import { useState, useEffect, useCallback } from "react";
+import { GoogleMap, useJsApiLoader, Polyline, Marker, InfoWindow } from "@react-google-maps/api";
 
 interface RouteSelectorProps {
   from: { lat: number; lng: number; name: string };
@@ -12,9 +10,23 @@ interface RouteSelectorProps {
   onClose: () => void;
 }
 
+const mapContainerStyle = {
+  width: "100%",
+  height: "400px",
+  borderRadius: "12px",
+};
+
 const defaultCenter = {
   lat: 17.44,
   lng: 78.45,
+};
+
+const mapOptions = {
+  disableDefaultUI: false,
+  zoomControl: true,
+  streetViewControl: false,
+  mapTypeControl: false,
+  fullscreenControl: true,
 };
 
 const colors = ["#6675FF", "#FF6B6B", "#4ECDC4", "#95E1D3", "#F38181"];
@@ -29,9 +41,11 @@ export default function RouteSelector({
   const [selectedRouteIndex, setSelectedRouteIndex] = useState<number>(-1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const mapRef = useRef<MapRef>(null);
+  const [map, setMap] = useState<google.maps.Map | null>(null);
 
-  const mapTilerKey = process.env.NEXT_PUBLIC_MAPTILER_API_KEY || "";
+  const { isLoaded, loadError } = useJsApiLoader({
+    googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "",
+  });
 
   useEffect(() => {
     async function fetchRoutes() {
@@ -65,8 +79,10 @@ export default function RouteSelector({
       }
     }
 
-    fetchRoutes();
-  }, [from, to]);
+    if (isLoaded) {
+      fetchRoutes();
+    }
+  }, [from, to, isLoaded]);
 
   const handleRouteClick = (index: number) => {
     setSelectedRouteIndex(index);
@@ -80,38 +96,36 @@ export default function RouteSelector({
   };
 
   const fitBounds = useCallback(() => {
-    if (!mapRef.current || !from?.lat || !to?.lat || routes.length === 0) return;
+    if (!map || !from?.lat || !to?.lat) return;
 
-    const bounds = new maplibregl.LngLatBounds();
-    bounds.extend([from.lng, from.lat]);
-    bounds.extend([to.lng, to.lat]);
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend({ lat: from.lat, lng: from.lng });
+    bounds.extend({ lat: to.lat, lng: to.lng });
     
     routes.forEach((route) => {
       if (route.geometry?.coordinates) {
         route.geometry.coordinates.forEach((coord: number[]) => {
-          bounds.extend([coord[0], coord[1]]);
+          bounds.extend({ lat: coord[1], lng: coord[0] });
         });
       }
     });
 
-    mapRef.current.fitBounds(bounds, { padding: 50, duration: 1000 });
-  }, [from, to, routes]);
+    map.fitBounds(bounds, 50);
+  }, [map, from, to, routes]);
 
   useEffect(() => {
-    if (routes.length > 0) {
-      setTimeout(() => fitBounds(), 100);
+    if (map && routes.length > 0) {
+      fitBounds();
     }
-  }, [routes, fitBounds]);
+  }, [map, routes, fitBounds]);
 
-  if (!mapTilerKey) {
+  if (loadError) {
     return (
       <div className="bg-white rounded-2xl p-6 shadow-xl">
-        <div className="text-center text-red-500">MapTiler API key is missing</div>
+        <div className="text-center text-red-500">Error loading map</div>
       </div>
     );
   }
-
-  const interactiveLayerIds = routes.map((_, i) => `route-${i}`);
 
   return (
     <div className="bg-white rounded-2xl p-4 shadow-xl max-w-2xl mx-auto">
@@ -141,68 +155,50 @@ export default function RouteSelector({
         </div>
       ) : (
         <>
-          <div className="h-[400px] relative">
-            <Map
-              ref={mapRef}
-              initialViewState={{
-                longitude: defaultCenter.lng,
-                latitude: defaultCenter.lat,
-                zoom: 12
-              }}
-              mapStyle={`https://api.maptiler.com/maps/streets-v2/style.json?key=${mapTilerKey}`}
-              style={{ width: "100%", height: "100%", borderRadius: "12px" }}
-              interactiveLayerIds={interactiveLayerIds}
-              onClick={(e) => {
-                if (e.features && e.features.length > 0) {
-                  const layerId = e.features[0].layer.id;
-                  const index = parseInt(layerId.replace("route-", ""), 10);
-                  if (!isNaN(index)) handleRouteClick(index);
-                }
-              }}
-              onLoad={() => fitBounds()}
-            >
-              <Marker longitude={from.lng} latitude={from.lat}>
-                <div className="bg-[#6675FF] text-white w-6 h-6 flex items-center justify-center rounded-full shadow-md font-bold text-xs">
-                  A
-                </div>
-              </Marker>
+          <GoogleMap
+            mapContainerStyle={mapContainerStyle}
+            center={defaultCenter}
+            zoom={12}
+            options={mapOptions}
+            onLoad={(mapInstance) => setMap(mapInstance)}
+          >
+            {/* Start marker */}
+            <Marker
+              position={{ lat: from.lat, lng: from.lng }}
+              label={{ text: "A", color: "white" }}
+            />
+            
+            {/* End marker */}
+            <Marker
+              position={{ lat: to.lat, lng: to.lng }}
+              label={{ text: "B", color: "white" }}
+            />
+
+            {/* Route polylines */}
+            {routes.map((route, index) => {
+              const path = route.geometry.coordinates.map(
+                (coord: number[]) => ({ lat: coord[1], lng: coord[0] })
+              );
               
-              <Marker longitude={to.lng} latitude={to.lat}>
-                <div className="bg-[#FF6B6B] text-white w-6 h-6 flex items-center justify-center rounded-full shadow-md font-bold text-xs">
-                  B
-                </div>
-              </Marker>
+              const isSelected = index === selectedRouteIndex;
+              const isHovered = index !== selectedRouteIndex;
 
-              {routes.map((route, index) => {
-                const isSelected = index === selectedRouteIndex;
-                return (
-                  <Source key={`source-${index}`} type="geojson" data={{
-                    type: "Feature",
-                    properties: {},
-                    geometry: {
-                      type: "LineString",
-                      coordinates: route.geometry.coordinates
-                    }
-                  }}>
-                    <Layer
-                      id={`route-${index}`}
-                      type="line"
-                      layout={{
-                        "line-join": "round",
-                        "line-cap": "round"
-                      }}
-                      paint={{
-                        "line-color": isSelected ? colors[index % colors.length] : "#ccc",
-                        "line-width": isSelected ? 5 : 3,
-                        "line-opacity": isSelected ? 1 : 0.6
-                      }}
-                    />
-                  </Source>
-                );
-              })}
-            </Map>
-          </div>
+              return (
+                <Polyline
+                  key={index}
+                  path={path}
+                  options={{
+                    strokeColor: isSelected ? colors[index % colors.length] : "#ccc",
+                    strokeOpacity: isSelected ? 1 : 0.4,
+                    strokeWeight: isSelected ? 5 : 3,
+                  }}
+                  onClick={() => handleRouteClick(index)}
+                />
+              );
+            })}
+          </GoogleMap>
 
+          {/* Route options list */}
           <div className="mt-4 space-y-2 max-h-[150px] overflow-y-auto">
             {routes.map((route, index) => (
               <button

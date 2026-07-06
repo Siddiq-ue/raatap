@@ -34,3 +34,11 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Location Services Environment Variables
+
+This project uses free/open-source alternatives for location services.
+To run the app locally, you will need to set the following in your `.env` or `.env.local` file:
+
+- `LOCATIONIQ_API_KEY`: Get this from [LocationIQ](https://locationiq.com/) for location search/geocoding.
+- `NEXT_PUBLIC_MAPTILER_API_KEY`: Get this from [MapTiler](https://maptiler.com/) for map rendering tiles.
