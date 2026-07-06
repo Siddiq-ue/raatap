@@ -101,6 +101,10 @@ export default function AdminUsersPage() {
     }
   };
 
+  const isCampusLeader = (profile: Profile) => {
+    return !!profile.campus_leaders && (Array.isArray(profile.campus_leaders) ? profile.campus_leaders.length > 0 : true);
+  };
+
   const handleToggleCampusLeader = async (userId: string, isLeader: boolean, institution: string) => {
     try {
       if (isLeader) {
@@ -118,7 +122,10 @@ export default function AdminUsersPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userId, institution: inst })
         });
-        if (!res.ok) throw new Error("Failed to promote");
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "Failed to promote");
+        }
         setProfiles(prev => prev.map(p => p.id === userId ? { ...p, campus_leaders: [{ id: "new" }] } : p));
       }
     } catch (err: any) {
@@ -240,7 +247,7 @@ export default function AdminUsersPage() {
                             {profile.prefer_hosting && <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">Host</span>}
                             {profile.prefer_taking_ride && <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs rounded-full">Rider</span>}
                           </div>
-                          {profile.campus_leaders && profile.campus_leaders.length > 0 && (
+                          {isCampusLeader(profile) && (
                             <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-bold uppercase rounded border border-purple-200">
                               Leader
                             </span>
@@ -261,15 +268,15 @@ export default function AdminUsersPage() {
                           </a>
                           
                           <button
-                            onClick={() => handleToggleCampusLeader(profile.id, !!(profile.campus_leaders && profile.campus_leaders.length > 0), profile.institution)}
+                            onClick={() => handleToggleCampusLeader(profile.id, isCampusLeader(profile), profile.institution)}
                             disabled={actionLoading === `cl-${profile.id}`}
                             className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors border disabled:opacity-50 ${
-                              profile.campus_leaders && profile.campus_leaders.length > 0
+                              isCampusLeader(profile)
                                 ? "bg-white text-red-600 border-red-200 hover:bg-red-50"
                                 : "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
                             }`}
                           >
-                            {actionLoading === `cl-${profile.id}` ? "..." : (profile.campus_leaders && profile.campus_leaders.length > 0 ? "- CL" : "+ CL")}
+                            {actionLoading === `cl-${profile.id}` ? "..." : (isCampusLeader(profile) ? "- CL" : "+ CL")}
                           </button>
 
                           {profile.email_verified !== true && profile.institutional_email !== "REJECTED" && (
