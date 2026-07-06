@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { isValidPhoneNumber } from "libphonenumber-js";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 import LocationInput from "@/components/LocationInput";
@@ -733,8 +734,8 @@ export default function DashboardContent() {
     if (!formData.full_name) newErrors.full_name = "Full name is required";
     if (!formData.phone_number)
       newErrors.phone_number = "Phone number is required";
-    else if (!/^[0-9]{10}$/.test(formData.phone_number))
-      newErrors.phone_number = "Enter a valid 10-digit number";
+    else if (!isValidPhoneNumber(formData.phone_number, "IN"))
+      newErrors.phone_number = "Enter a valid phone number";
     if (!formData.age) newErrors.age = "Age is required";
     if (!formData.gender) newErrors.gender = "Gender is required";
     if (!formData.institution)

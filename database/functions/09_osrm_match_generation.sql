@@ -68,7 +68,7 @@ BEGIN
                         COALESCE((match_result->>'match_score')::NUMERIC, 0),
                         COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
                         COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
-                        COALESCE((match_result->>'original_distance_meters')::NUMERIC, 0),
+                        COALESCE((match_result->>'overlapping_distance_meters')::NUMERIC, 0),
                         'pending_host_approval'
                     );
                     suggestions_created := suggestions_created + 1;
@@ -152,7 +152,7 @@ BEGIN
                         COALESCE((match_result->>'match_score')::NUMERIC, 0),
                         COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
                         COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
-                        COALESCE((match_result->>'original_distance_meters')::NUMERIC, 0),
+                        COALESCE((match_result->>'overlapping_distance_meters')::NUMERIC, 0),
                         'pending_host_approval'
                     );
                     suggestions_created := suggestions_created + 1;

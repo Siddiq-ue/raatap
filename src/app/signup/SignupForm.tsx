@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useState, useEffect } from "react";
+import { isValid as isValidEmail } from "mailchecker";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 
 export default function SignupForm() {
@@ -119,6 +120,12 @@ export default function SignupForm() {
 
     if (!isSupabaseConfigured()) {
       setError("⚠️ Supabase is not configured yet!");
+      setEmailLoading(false);
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      setError("Please use a real, non-disposable email address.");
       setEmailLoading(false);
       return;
     }

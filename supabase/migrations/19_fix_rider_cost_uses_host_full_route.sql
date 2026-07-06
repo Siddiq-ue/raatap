@@ -1,38 +1,23 @@
 -- =================================================================
--- DEPLOY OSRM MATCHING SYSTEM
+-- FIX: Rider cost estimate used the host's FULL route distance
 -- =================================================================
--- Run this ENTIRE file in Supabase SQL Editor
--- This deploys all OSRM matching functions and triggers
+-- Bug: generate_match_suggestions_for_ride_template/_request stored
+-- match_result->>'original_distance_meters' (the host's entire from->to
+-- route distance) into match_suggestions.overlapping_distance_meters.
+-- The frontend multiplies overlapping_distance_meters by cost/km to show
+-- "Rider pays: ₹X", so riders were being charged for the host's whole
+-- trip instead of just their own pickup -> dropoff segment.
+--
+-- Fix: calculate_route_match_score now also computes the rider's actual
+-- overlapping segment (via calculate_overlapping_distance, which projects
+-- pickup/dropoff onto the host route) and the generation functions store
+-- that value instead.
 -- =================================================================
 
 -- ----------------------------------------------------------------
--- STEP 1: Enable pg_http Extension
+-- 1. Overlapping distance helper (rider's pickup -> dropoff segment
+--    projected onto the host's route)
 -- ----------------------------------------------------------------
-
--- Enable the pg_http extension (Supabase provides this)
-CREATE EXTENSION IF NOT EXISTS http WITH SCHEMA extensions;
-
--- Grant permissions for extension schema/functions (avoid signature-specific grants)
-GRANT USAGE ON SCHEMA extensions TO postgres, anon, authenticated;
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA extensions TO postgres, anon, authenticated;
-
-
--- ----------------------------------------------------------------
--- STEP 2: Configure OSRM URL (Optional)
--- ----------------------------------------------------------------
--- Uncomment to use self-hosted OSRM:
--- ALTER DATABASE postgres SET "app.settings.osrm_url" = 'http://your-osrm-server:5000';
-
-
--- ----------------------------------------------------------------
--- STEP 2b: Create Overlapping Distance Helper Function
--- ----------------------------------------------------------------
--- Computes the distance (in meters) of the rider's actual pickup -> dropoff
--- segment along the host's route, by projecting both points onto the host
--- route line and taking the distance between their fractional positions.
--- Capped by the rider's own OSRM point-to-point distance so a rider can never
--- be charged for more than they actually travel.
-
 CREATE OR REPLACE FUNCTION calculate_overlapping_distance(
     p_host_from_lat FLOAT,
     p_host_from_lng FLOAT,
@@ -156,11 +141,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-
 -- ----------------------------------------------------------------
--- STEP 3: Create OSRM Matching Function
+-- 2. calculate_route_match_score: now also returns overlapping_distance_meters
+--    computed from the rider's actual pickup -> dropoff segment, instead of
+--    only the host's full route distance.
 -- ----------------------------------------------------------------
-
 CREATE OR REPLACE FUNCTION calculate_route_match_score(
     template_id UUID,
     request_id UUID
@@ -208,9 +193,6 @@ BEGIN
         );
     END IF;
 
-    -- ============================================================
-    -- EMAIL VERIFICATION CHECK
-    -- ============================================================
     -- Both host and rider must have verified emails
     IF (SELECT email_verified FROM profiles WHERE id = template.host_id) IS NOT TRUE THEN
         RETURN json_build_object(
@@ -243,13 +225,12 @@ BEGIN
         );
     END IF;
 
-    -- Get OSRM server URL
     osrm_url := COALESCE(
         current_setting('app.settings.osrm_url', true),
         'https://router.project-osrm.org'
     );
 
-    -- Call OSRM API - Original Route (Host: from → to)
+    -- Call OSRM API - Original Route (Host: from -> to)
     BEGIN
         SELECT (content->'routes'->0) INTO original_route
         FROM extensions.http_get(
@@ -278,7 +259,7 @@ BEGIN
         );
     END;
 
-    -- Call OSRM API - Detour Route (Host + Rider: from → pickup → to)
+    -- Call OSRM API - Detour Route (Host + Rider: from -> pickup -> to)
     BEGIN
         SELECT (content->'routes'->0) INTO detour_route
         FROM extensions.http_get(
@@ -316,10 +297,8 @@ BEGIN
         );
     END;
 
-    -- Calculate detour added
     detour_added := detour_distance - original_distance;
 
-    -- Check: Is detour acceptable? (≤ 5km extra)
     IF detour_added > 5000 THEN
         RETURN json_build_object(
             'compatible', false,
@@ -329,7 +308,6 @@ BEGIN
         );
     END IF;
 
-    -- Check destination distance (≤ 3km straight-line)
     destination_distance := ST_Distance(
         template.to_point::geography,
         ride_request.destination_point::geography,
@@ -345,17 +323,15 @@ BEGIN
         );
     END IF;
 
-    -- Calculate match score
     match_score := GREATEST(0, 100 - (detour_added / 50));
 
-    -- Bonus for close destination
     IF destination_distance < 1000 THEN
         match_score := LEAST(100, match_score + 10);
     END IF;
 
-    -- Calculate the rider's actual overlapping segment (pickup -> dropoff) along
-    -- the host route. This, NOT the host's full route distance, is what the
-    -- rider should be charged for.
+    -- Rider's actual overlapping segment (pickup -> dropoff) along the host
+    -- route. This, NOT the host's full route distance, is what the rider
+    -- should be charged for.
     overlapping_distance := calculate_overlapping_distance(
         template.from_lat, template.from_lng,
         template.to_lat, template.to_lng,
@@ -363,7 +339,6 @@ BEGIN
         ride_request.destination_lat, ride_request.destination_lng
     );
 
-    -- Return result
     RETURN json_build_object(
         'compatible', true,
         'match_score', ROUND(match_score, 2),
@@ -390,17 +365,15 @@ END;
 $$;
 
 COMMENT ON FUNCTION calculate_route_match_score IS
-'Pure OSRM-based matching. Uses actual road distances to calculate detour.
-Criteria:
-- Detour added ≤ 5km (road distance via OSRM)
-- Destination distance ≤ 3km (straight-line)
-- Gender preference compatible';
-
+'OSRM-based matching. Uses actual road distances to calculate detour, and
+calculate_overlapping_distance() to determine the rider''s billable segment
+(NOT the host''s full route).';
 
 -- ----------------------------------------------------------------
--- STEP 4: Create Match Generation Functions
+-- 3. Match generation functions: store overlapping_distance_meters
+--    (rider''s segment) instead of original_distance_meters (host''s
+--    full route) in match_suggestions.
 -- ----------------------------------------------------------------
-
 CREATE OR REPLACE FUNCTION generate_match_suggestions_for_ride_template(
     template_id UUID
 )
@@ -415,13 +388,17 @@ DECLARE
     existing_match UUID;
 BEGIN
     SELECT * INTO template
-    FROM ride_templates WHERE id = template_id;
+    FROM ride_templates
+    WHERE id = template_id;
 
-    IF NOT FOUND THEN RETURN 0; END IF;
+    IF NOT FOUND THEN
+        RETURN 0;
+    END IF;
 
     FOR request IN
         SELECT * FROM ride_requests
-        WHERE status = 'active' AND rider_id != template.host_id
+        WHERE status = 'active'
+        AND rider_id != template.host_id
     LOOP
         SELECT id INTO existing_match
         FROM match_suggestions
@@ -435,13 +412,20 @@ BEGIN
             IF (match_result->>'compatible')::BOOLEAN = true THEN
                 BEGIN
                     INSERT INTO match_suggestions (
-                        ride_template_id, ride_request_id,
-                        route_match_score, schedule_match_score, overall_score,
-                        detour_distance_meters, pickup_distance_meters,
-                        overlapping_distance_meters, status
+                        ride_template_id,
+                        ride_request_id,
+                        route_match_score,
+                        schedule_match_score,
+                        overall_score,
+                        detour_distance_meters,
+                        pickup_distance_meters,
+                        overlapping_distance_meters,
+                        status
                     ) VALUES (
-                        template_id, request.id,
-                        COALESCE((match_result->>'match_score')::NUMERIC, 0), 0,
+                        template_id,
+                        request.id,
+                        COALESCE((match_result->>'match_score')::NUMERIC, 0),
+                        0,
                         COALESCE((match_result->>'match_score')::NUMERIC, 0),
                         COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
                         COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
@@ -473,12 +457,18 @@ DECLARE
     suggestions_created INTEGER := 0;
     existing_match UUID;
 BEGIN
-    SELECT * INTO request FROM ride_requests WHERE id = request_id;
-    IF NOT FOUND THEN RETURN 0; END IF;
+    SELECT * INTO request
+    FROM ride_requests
+    WHERE id = request_id;
+
+    IF NOT FOUND THEN
+        RETURN 0;
+    END IF;
 
     FOR template IN
         SELECT * FROM ride_templates
-        WHERE status = 'active' AND host_id != request.rider_id
+        WHERE status = 'active'
+        AND host_id != request.rider_id
     LOOP
         SELECT id INTO existing_match
         FROM match_suggestions
@@ -492,13 +482,20 @@ BEGIN
             IF (match_result->>'compatible')::BOOLEAN = true THEN
                 BEGIN
                     INSERT INTO match_suggestions (
-                        ride_template_id, ride_request_id,
-                        route_match_score, schedule_match_score, overall_score,
-                        detour_distance_meters, pickup_distance_meters,
-                        overlapping_distance_meters, status
+                        ride_template_id,
+                        ride_request_id,
+                        route_match_score,
+                        schedule_match_score,
+                        overall_score,
+                        detour_distance_meters,
+                        pickup_distance_meters,
+                        overlapping_distance_meters,
+                        status
                     ) VALUES (
-                        template.id, request_id,
-                        COALESCE((match_result->>'match_score')::NUMERIC, 0), 0,
+                        template.id,
+                        request_id,
+                        COALESCE((match_result->>'match_score')::NUMERIC, 0),
+                        0,
                         COALESCE((match_result->>'match_score')::NUMERIC, 0),
                         COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
                         COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
@@ -517,131 +514,20 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION regenerate_matches_for_template(template_id UUID)
-RETURNS INTEGER
-LANGUAGE plpgsql
-AS $$
-DECLARE matches_found INTEGER;
-BEGIN
-    DELETE FROM match_suggestions
-    WHERE ride_template_id = template_id AND status IN ('pending', 'shown', 'pending_host_approval', 'pending_rider_approval');
-    
-    matches_found := generate_match_suggestions_for_ride_template(template_id);
-    RAISE NOTICE 'Regenerated % matches for template %', matches_found, template_id;
-    RETURN matches_found;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION regenerate_matches_for_request(request_id UUID)
-RETURNS INTEGER
-LANGUAGE plpgsql
-AS $$
-DECLARE matches_found INTEGER;
-BEGIN
-    DELETE FROM match_suggestions
-    WHERE ride_request_id = request_id AND status IN ('pending', 'shown', 'pending_host_approval', 'pending_rider_approval');
-    
-    matches_found := generate_match_suggestions_for_ride_request(request_id);
-    RAISE NOTICE 'Regenerated % matches for request %', matches_found, request_id;
-    RETURN matches_found;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION generate_all_matches()
-RETURNS JSON
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    template_count INTEGER;
-    request_count INTEGER;
-    total_matches INTEGER := 0;
-    template_rec RECORD;
-BEGIN
-    SELECT COUNT(*) INTO template_count FROM ride_templates WHERE status = 'active';
-    SELECT COUNT(*) INTO request_count FROM ride_requests WHERE status = 'active';
-
-    FOR template_rec IN SELECT id FROM ride_templates WHERE status = 'active'
-    LOOP
-        total_matches := total_matches + generate_match_suggestions_for_ride_template(template_rec.id);
-    END LOOP;
-
-    RETURN json_build_object(
-        'success', true,
-        'templates_processed', template_count,
-        'requests_count', request_count,
-        'total_matches_created', total_matches
-    );
-END;
-$$;
-
-
 -- ----------------------------------------------------------------
--- STEP 5: Create Instant Matching Triggers
+-- 4. Backfill: recompute overlapping_distance_meters for existing
+--    pending/unresolved match suggestions that were stored with the
+--    host's full route distance, so already-created suggestions also
+--    show the correct rider cost without waiting for a new match.
 -- ----------------------------------------------------------------
-
-CREATE OR REPLACE FUNCTION trigger_auto_match_template()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE matches_found INTEGER;
-BEGIN
-    matches_found := generate_match_suggestions_for_ride_template(NEW.id);
-    RAISE NOTICE 'Auto-generated % matches for new ride template %', matches_found, NEW.id;
-    RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS on_ride_template_created_auto_match ON ride_templates;
-CREATE TRIGGER on_ride_template_created_auto_match
-AFTER INSERT ON ride_templates
-FOR EACH ROW
-EXECUTE FUNCTION trigger_auto_match_template();
-
-CREATE OR REPLACE FUNCTION trigger_auto_match_request()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE matches_found INTEGER;
-BEGIN
-    matches_found := generate_match_suggestions_for_ride_request(NEW.id);
-    RAISE NOTICE 'Auto-generated % matches for new ride request %', matches_found, NEW.id;
-    RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS on_ride_request_created_auto_match ON ride_requests;
-CREATE TRIGGER on_ride_request_created_auto_match
-AFTER INSERT ON ride_requests
-FOR EACH ROW
-EXECUTE FUNCTION trigger_auto_match_request();
-
-
--- ----------------------------------------------------------------
--- STEP 6: Deployment Complete - Test
--- ----------------------------------------------------------------
-
-DO $$
-BEGIN
-    RAISE NOTICE '✅ OSRM Matching System Deployed Successfully!';
-    RAISE NOTICE '';
-    RAISE NOTICE 'Deployed components:';
-    RAISE NOTICE '  - calculate_route_match_score() - OSRM-based matching';
-    RAISE NOTICE '  - generate_match_suggestions_for_ride_template()';
-    RAISE NOTICE '  - generate_match_suggestions_for_ride_request()';
-    RAISE NOTICE '  - regenerate_matches_for_template()';
-    RAISE NOTICE '  - regenerate_matches_for_request()';
-    RAISE NOTICE '  - generate_all_matches()';
-    RAISE NOTICE '  - trigger_auto_match_template()';
-    RAISE NOTICE '  - trigger_auto_match_request()';
-    RAISE NOTICE '  - trigger_auto_match_template_on_reactivate()';
-    RAISE NOTICE '  - trigger_auto_match_request_on_reactivate()';
-    RAISE NOTICE '';
-    RAISE NOTICE 'Matching criteria:';
-    RAISE NOTICE '  - Detour ≤ 5km (road distance via OSRM)';
-    RAISE NOTICE '  - Destination ≤ 3km (straight-line)';
-    RAISE NOTICE '  - Gender compatible';
-    RAISE NOTICE '';
-    RAISE NOTICE 'Test with: SELECT generate_all_matches();';
-END $$;
+UPDATE match_suggestions ms
+SET overlapping_distance_meters = calculate_overlapping_distance(
+    rt.from_lat, rt.from_lng,
+    rt.to_lat, rt.to_lng,
+    rr.pickup_lat, rr.pickup_lng,
+    rr.destination_lat, rr.destination_lng
+)
+FROM ride_templates rt, ride_requests rr
+WHERE ms.ride_template_id = rt.id
+AND ms.ride_request_id = rr.id
+AND ms.status IN ('pending', 'shown', 'pending_host_approval', 'pending_rider_approval');

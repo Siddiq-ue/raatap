@@ -27,6 +27,7 @@ DECLARE
     detour_distance NUMERIC;
     detour_added NUMERIC;
     destination_distance NUMERIC;
+    overlapping_distance NUMERIC;
     gender_compatible BOOLEAN;
     match_score NUMERIC;
     osrm_url TEXT;
@@ -180,6 +181,16 @@ BEGIN
         match_score := LEAST(100, match_score + 10);
     END IF;
 
+    -- Calculate the rider's actual overlapping segment (pickup -> dropoff) along
+    -- the host route. This, NOT the host's full route distance, is what the
+    -- rider should be charged for.
+    overlapping_distance := calculate_overlapping_distance(
+        template.from_lat, template.from_lng,
+        template.to_lat, template.to_lng,
+        ride_request.pickup_lat, ride_request.pickup_lng,
+        ride_request.destination_lat, ride_request.destination_lng
+    );
+
     -- Return result
     RETURN json_build_object(
         'compatible', true,
@@ -192,6 +203,8 @@ BEGIN
         'detour_added_km', ROUND(detour_added / 1000.0, 2),
         'destination_distance_meters', ROUND(destination_distance),
         'destination_distance_km', ROUND(destination_distance / 1000.0, 2),
+        'overlapping_distance_meters', ROUND(overlapping_distance),
+        'overlapping_distance_km', ROUND(overlapping_distance / 1000.0, 2),
         'reason', 'Compatible route found via OSRM'
     );
 
@@ -271,7 +284,7 @@ BEGIN
                     COALESCE((match_result->>'match_score')::NUMERIC, 0),
                     COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
                     COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
-                    COALESCE((match_result->>'original_distance_meters')::NUMERIC, 0),
+                    COALESCE((match_result->>'overlapping_distance_meters')::NUMERIC, 0),
                     'pending'
                 );
 
@@ -340,7 +353,7 @@ BEGIN
                     COALESCE((match_result->>'match_score')::NUMERIC, 0),
                     COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
                     COALESCE((match_result->>'detour_added_meters')::INTEGER, 0),
-                    COALESCE((match_result->>'original_distance_meters')::NUMERIC, 0),
+                    COALESCE((match_result->>'overlapping_distance_meters')::NUMERIC, 0),
                     'pending'
                 );
 
