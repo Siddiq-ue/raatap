@@ -18,6 +18,8 @@
     "@supabase/auth-helpers-nextjs": "^0.15.0",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.91.0",
+    "libphonenumber-js": "^1.13.8",
+    "mailchecker": "^6.0.20",
     "next": "16.1.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
