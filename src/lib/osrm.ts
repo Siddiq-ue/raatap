@@ -2,8 +2,8 @@
  * OSRM (Open Source Routing Machine) Utility
  * Calculates real road-based distances and routes
  * 
- * Uses public OSRM demo server by default: https://router.project-osrm.org
- * For production, configure a self-hosted OSRM server via OSRM_SERVER_URL
+ * TODO: The default URL (https://router.project-osrm.org) is a public demo instance 
+ * not meant for production traffic. Set OSRM_SERVER_URL to a self-hosted instance before launch.
  * 
  * @example
  * // Use public server

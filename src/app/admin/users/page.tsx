@@ -22,6 +22,7 @@ interface Profile {
   comfortable_with: string;
   email_verified: boolean | null;
   created_at: string;
+  campus_leaders?: { id: string }[];
 }
 
 type FilterType = "all" | "pending" | "verified" | "rejected";
@@ -97,6 +98,40 @@ export default function AdminUsersPage() {
       alert("Network error");
     } finally {
       setRejecting(false);
+    }
+  };
+
+  const isCampusLeader = (profile: Profile) => {
+    return !!profile.campus_leaders && (Array.isArray(profile.campus_leaders) ? profile.campus_leaders.length > 0 : true);
+  };
+
+  const handleToggleCampusLeader = async (userId: string, isLeader: boolean, institution: string) => {
+    try {
+      if (isLeader) {
+        if (!confirm("Are you sure you want to revoke Campus Leader status?")) return;
+        setActionLoading(`cl-${userId}`);
+        const res = await fetch(`/api/admin/campus-leaders?userId=${userId}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("Failed to revoke");
+        setProfiles(prev => prev.map(p => p.id === userId ? { ...p, campus_leaders: [] } : p));
+      } else {
+        const inst = prompt("Enter institution for this Campus Leader:", institution || "");
+        if (!inst) return;
+        setActionLoading(`cl-${userId}`);
+        const res = await fetch(`/api/admin/campus-leaders`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, institution: inst })
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "Failed to promote");
+        }
+        setProfiles(prev => prev.map(p => p.id === userId ? { ...p, campus_leaders: [{ id: "new" }] } : p));
+      }
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -207,9 +242,16 @@ export default function AdminUsersPage() {
                       <td className="px-4 py-3.5 text-gray-600">{profile.phone_number}</td>
                       <td className="px-4 py-3.5 text-gray-600">{profile.institution}</td>
                       <td className="px-4 py-3.5">
-                        <div className="flex gap-1">
-                          {profile.prefer_hosting && <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">Host</span>}
-                          {profile.prefer_taking_ride && <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs rounded-full">Rider</span>}
+                        <div className="flex flex-col gap-1 items-start">
+                          <div className="flex gap-1">
+                            {profile.prefer_hosting && <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">Host</span>}
+                            {profile.prefer_taking_ride && <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs rounded-full">Rider</span>}
+                          </div>
+                          {isCampusLeader(profile) && (
+                            <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-bold uppercase rounded border border-purple-200">
+                              Leader
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3.5 text-gray-600 max-w-[200px] truncate" title={`${profile.from_location} → ${profile.to_location}`}>
@@ -217,28 +259,49 @@ export default function AdminUsersPage() {
                       </td>
                       <td className="px-4 py-3.5">{getStatusBadge(profile)}</td>
                       <td className="px-4 py-3.5 text-right">
-                        {profile.email_verified !== true && profile.institutional_email !== "REJECTED" && (
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => handleApprove(profile.id)}
-                              disabled={actionLoading === profile.id}
-                              className="px-3 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
-                            >
-                              {actionLoading === profile.id ? "..." : "Approve"}
-                            </button>
-                            <button
-                              onClick={() => setRejectModal({ open: true, userId: profile.id, userName: profile.full_name })}
-                              className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-medium rounded-lg transition-colors"
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        )}
-                        {profile.institutional_email === "REJECTED" && profile.rejection_reason && (
-                          <span className="text-xs text-gray-400 italic" title={profile.rejection_reason}>
-                            {profile.rejection_reason.length > 30 ? profile.rejection_reason.slice(0, 30) + "..." : profile.rejection_reason}
-                          </span>
-                        )}
+                        <div className="flex items-center justify-end gap-2">
+                          <a
+                            href={`/admin/users/${profile.id}`}
+                            className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-medium rounded-lg transition-colors border border-gray-200"
+                          >
+                            View
+                          </a>
+                          
+                          <button
+                            onClick={() => handleToggleCampusLeader(profile.id, isCampusLeader(profile), profile.institution)}
+                            disabled={actionLoading === `cl-${profile.id}`}
+                            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors border disabled:opacity-50 ${
+                              isCampusLeader(profile)
+                                ? "bg-white text-red-600 border-red-200 hover:bg-red-50"
+                                : "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
+                            }`}
+                          >
+                            {actionLoading === `cl-${profile.id}` ? "..." : (isCampusLeader(profile) ? "- CL" : "+ CL")}
+                          </button>
+
+                          {profile.email_verified !== true && profile.institutional_email !== "REJECTED" && (
+                            <>
+                              <button
+                                onClick={() => handleApprove(profile.id)}
+                                disabled={actionLoading === profile.id}
+                                className="px-3 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+                              >
+                                {actionLoading === profile.id ? "..." : "Approve"}
+                              </button>
+                              <button
+                                onClick={() => setRejectModal({ open: true, userId: profile.id, userName: profile.full_name })}
+                                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-medium rounded-lg transition-colors"
+                              >
+                                Reject
+                              </button>
+                            </>
+                          )}
+                          {profile.institutional_email === "REJECTED" && profile.rejection_reason && (
+                            <span className="text-xs text-gray-400 italic" title={profile.rejection_reason}>
+                              {profile.rejection_reason.length > 20 ? profile.rejection_reason.slice(0, 20) + "..." : profile.rejection_reason}
+                            </span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

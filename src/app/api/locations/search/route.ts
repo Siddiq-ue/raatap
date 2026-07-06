@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// Simple in-memory cache for Nominatim to respect the 1 request/sec rate limit
+let lastNominatimRequestTime = 0;
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const query = searchParams.get("q");
@@ -8,56 +11,57 @@ export async function GET(request: NextRequest) {
     return NextResponse.json([]);
   }
 
-  const googleApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  const locationIqApiKey = process.env.LOCATIONIQ_API_KEY;
 
-  // Try Google Places API first (better results for colleges, buildings)
-  if (googleApiKey) {
+  // Try LocationIQ API first (Primary provider)
+  if (locationIqApiKey) {
     try {
-      const googleResponse = await fetch(
-        `https://maps.googleapis.com/maps/api/place/autocomplete/json?` +
+      const locationIqResponse = await fetch(
+        `https://api.locationiq.com/v1/autocomplete.php?` +
           new URLSearchParams({
-            input: query,
-            key: googleApiKey,
-            components: "country:in", // Restrict to India
-            types: "establishment|geocode", // Include businesses and addresses
-            language: "en",
+            q: query,
+            key: locationIqApiKey,
+            countrycodes: "in", // Restrict to India
+            limit: "5",
+            format: "json",
           }),
       );
 
-      const googleData = await googleResponse.json();
-
-      if (googleData.status === "OK" && googleData.predictions?.length > 0) {
-        // Transform Google results to our format
-        const results = googleData.predictions.map(
-          (prediction: {
-            place_id: string;
-            description: string;
-            structured_formatting?: {
-              main_text: string;
-              secondary_text: string;
-            };
-          }) => ({
+      if (locationIqResponse.ok) {
+        const data = await locationIqResponse.json();
+        
+        if (Array.isArray(data) && data.length > 0) {
+          // Transform LocationIQ results to our format
+          const results = data.map((prediction: any) => ({
             place_id: prediction.place_id,
-            display_name: prediction.description,
-            main_text: prediction.structured_formatting?.main_text || "",
-            secondary_text:
-              prediction.structured_formatting?.secondary_text || "",
-          }),
-        );
-        return NextResponse.json(results);
+            display_name: prediction.display_name,
+            lat: prediction.lat,
+            lon: prediction.lon,
+            main_text: prediction.address?.name || prediction.display_name.split(',')[0],
+            secondary_text: prediction.display_name,
+          }));
+          return NextResponse.json(results);
+        }
+      } else {
+         console.warn(`LocationIQ returned status: ${locationIqResponse.status}`);
       }
-
-      // If Google returns no results or error, fall back to Nominatim
-      console.log(
-        "Google Places returned no results, falling back to Nominatim",
-      );
     } catch (error) {
-      console.error("Google Places API error:", error);
+      console.error("LocationIQ API error:", error);
     }
   }
 
   // Fallback to OpenStreetMap Nominatim (free)
   try {
+    // Respect Nominatim 1 request per second policy
+    const now = Date.now();
+    const timeSinceLastRequest = now - lastNominatimRequestTime;
+    
+    if (timeSinceLastRequest < 1000) {
+      // Delay to ensure we respect 1req/sec
+      await new Promise(resolve => setTimeout(resolve, 1000 - timeSinceLastRequest));
+    }
+    lastNominatimRequestTime = Date.now();
+
     const searchQueries = [
       query,
       `${query}, Hyderabad, India`,

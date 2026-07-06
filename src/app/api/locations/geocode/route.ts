@@ -3,50 +3,54 @@ import { NextRequest, NextResponse } from "next/server";
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const placeId = searchParams.get("place_id");
+  const query = searchParams.get("q");
 
-  if (!placeId) {
-    return NextResponse.json({ error: "Missing place_id" }, { status: 400 });
+  if (!placeId && !query) {
+    return NextResponse.json({ error: "Missing place_id or q" }, { status: 400 });
   }
 
-  const googleApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  const locationIqApiKey = process.env.LOCATIONIQ_API_KEY;
 
-  if (!googleApiKey) {
+  if (!locationIqApiKey) {
     return NextResponse.json(
-      { error: "Google Maps API key not configured" },
+      { error: "LocationIQ API key not configured" },
       { status: 500 }
     );
   }
 
   try {
+    const searchStr = query || placeId || "";
+    
     const response = await fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?` +
+      `https://us1.locationiq.com/v1/search.php?` +
         new URLSearchParams({
-          place_id: placeId,
-          key: googleApiKey,
+          q: searchStr,
+          key: locationIqApiKey,
+          format: "json",
+          limit: "1"
         })
     );
 
     if (!response.ok) {
-      throw new Error("Google Geocoding API request failed");
+      throw new Error("LocationIQ Geocoding API request failed");
     }
 
     const data = await response.json();
 
-    if (data.status !== "OK" || !data.results?.length) {
+    if (!Array.isArray(data) || data.length === 0) {
       return NextResponse.json(
-        { error: `Geocoding failed: ${data.status}` },
+        { error: `Geocoding failed: No results` },
         { status: 404 }
       );
     }
 
-    const result = data.results[0];
-    const location = result.geometry.location;
+    const result = data[0];
 
     return NextResponse.json({
-      lat: location.lat,
-      lng: location.lng,
-      formatted_address: result.formatted_address,
-      place_id: placeId,
+      lat: parseFloat(result.lat),
+      lng: parseFloat(result.lon), // Note the renaming from lon to lng for our frontend
+      formatted_address: result.display_name,
+      place_id: result.place_id,
     });
   } catch (error) {
     console.error("Geocoding error:", error);

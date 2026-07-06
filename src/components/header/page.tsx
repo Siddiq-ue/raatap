@@ -80,6 +80,10 @@ export default function Header() {
     window.location.href = "/";
   };
 
+  if (pathname.startsWith("/admin")) {
+    return null;
+  }
+
   return (
     <header className="sticky top-0 z-50 w-full px-4 sm:px-6 md:px-12 py-3 sm:py-4 bg-white/90 backdrop-blur-xl border-b border-gray-100 shadow-sm">
       <div className="flex items-center justify-between max-w-7xl mx-auto">
