@@ -26,7 +26,12 @@ export default function CampusLeaderDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/campus-leader/users");
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/campus-leader/users", {
+        headers: {
+          "Authorization": session ? `Bearer ${session.access_token}` : ""
+        }
+      });
       const data = await res.json();
       
       if (!res.ok) {
@@ -47,9 +52,14 @@ export default function CampusLeaderDashboard() {
     
     setVerifyingId(userId);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      
       const res = await fetch("/api/campus-leader/verify", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": session ? `Bearer ${session.access_token}` : ""
+        },
         body: JSON.stringify({ userIdToVerify: userId }),
       });
       

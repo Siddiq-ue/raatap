@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { cookies } from "next/headers";
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,32 +12,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Verify caller is authenticated
-    const cookieStore = await cookies();
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value;
-          },
-          set(name: string, value: string, options: CookieOptions) {
-            cookieStore.set({ name, value, ...options });
-          },
-          remove(name: string, options: CookieOptions) {
-            cookieStore.set({ name, value: "", ...options });
-          },
-        },
-      },
-    );
-
-    const {
-      data: { user: caller },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !caller) {
+    // 1. Verify caller is authenticated via Authorization header
+    const token = req.headers.get("Authorization")?.replace("Bearer ", "");
+    
+    if (!token) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -48,6 +24,17 @@ export async function POST(req: NextRequest) {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
     );
+
+    const {
+      data: { user: caller },
+      error: authError,
+    } = await supabaseService.auth.getUser(token);
+
+    if (authError || !caller) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+
 
     // 3. Verify caller is a campus leader
     const { data: campusLeader, error: leaderError } = await supabaseService
