@@ -37,6 +37,7 @@ DECLARE
     detour_distance NUMERIC;
     detour_added NUMERIC;
     destination_distance NUMERIC;
+    overlapping_distance NUMERIC;
     gender_compatible BOOLEAN;
     match_score NUMERIC;
     osrm_url TEXT;
@@ -234,6 +235,18 @@ BEGIN
     END IF;
 
     -- ============================================================
+    -- 8b. CALCULATE THE RIDER'S ACTUAL OVERLAPPING SEGMENT
+    -- ============================================================
+    -- This is the pickup -> dropoff segment along the host route, NOT the
+    -- host's full route distance. This is what the rider should be charged for.
+    overlapping_distance := calculate_overlapping_distance(
+        template.from_lat, template.from_lng,
+        template.to_lat, template.to_lng,
+        ride_request.pickup_lat, ride_request.pickup_lng,
+        ride_request.destination_lat, ride_request.destination_lng
+    );
+
+    -- ============================================================
     -- 9. RETURN RESULT
     -- ============================================================
     RETURN json_build_object(
@@ -247,6 +260,8 @@ BEGIN
         'detour_added_km', ROUND(detour_added / 1000.0, 2),
         'destination_distance_meters', ROUND(destination_distance),
         'destination_distance_km', ROUND(destination_distance / 1000.0, 2),
+        'overlapping_distance_meters', ROUND(overlapping_distance),
+        'overlapping_distance_km', ROUND(overlapping_distance / 1000.0, 2),
         'reason', 'Compatible route found via OSRM'
     );
 
