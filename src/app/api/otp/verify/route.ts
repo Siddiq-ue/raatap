@@ -267,18 +267,34 @@ export async function POST(request: NextRequest) {
                     continue;
                   }
 
+                  // Extract rider's actual pickup/destination coords from match (geography) -
+                  // was using host's own profile coords for both, which made every match's
+                  // overlap calculation compare the host's route against itself.
+                  const pickupPoint = match.pickup_point as any;
+                  const destPoint = match.destination_point as any;
+                  const riderPickupLat = pickupPoint?.coordinates?.[1] ?? null;
+                  const riderPickupLng = pickupPoint?.coordinates?.[0] ?? null;
+                  const riderDestLat = destPoint?.coordinates?.[1] ?? null;
+                  const riderDestLng = destPoint?.coordinates?.[0] ?? null;
+
+                  if (!riderPickupLat || !riderDestLat) {
+                    console.warn(`[OTP Verify] Could not extract rider coordinates from match, skipping...`);
+                    continue;
+                  }
+
                   const score = calculateMatchScore({
                     hostFrom: { lat: profile.from_lat, lng: profile.from_lng },
                     hostTo: { lat: profile.to_lat, lng: profile.to_lng },
-                    riderPickup: { lat: profile.from_lat, lng: profile.from_lng },
-                    riderDestination: { lat: profile.to_lat, lng: profile.to_lng },
+                    riderPickup: { lat: riderPickupLat, lng: riderPickupLng },
+                    riderDestination: { lat: riderDestLat, lng: riderDestLng },
                     riderTotalJourneyMeters: match.rider_total_journey_meters,
                     hostGenderPreference: profile.comfortable_with || 'both',
                     riderGenderPreference: riderProfile?.comfortable_with || 'both',
                     hostCollege: profile.institution,
                     riderCollege: riderProfile?.institution,
                     maxDetourMeters: 2000,
-                    maxDestinationMeters: 1000
+                    maxDestinationMeters: 1000,
+                    hostRouteGeometry: geometry
                   });
 
                   if (score.compatible) {
@@ -382,18 +398,24 @@ export async function POST(request: NextRequest) {
             
             const suggestionsToInsert = [];
             for (const match of matches) {
-              // Check if host has available seats
+              // Check if host has available seats, and fetch the host's actual
+              // route coordinates (was using rider's own profile coords for both)
               const { data: hostTemplate } = await supabase
                 .from("ride_templates")
-                .select("available_seats, seats_taken")
+                .select("available_seats, seats_taken, from_lat, from_lng, to_lat, to_lng, route_geometry")
                 .eq("id", match.template_id)
                 .single();
-              
+
               const remainingSeats = hostTemplate
                 ? (hostTemplate.available_seats - (hostTemplate.seats_taken || 0))
                 : 0;
 
               if (remainingSeats <= 0) continue; // Skip hosts with no seats
+
+              if (!hostTemplate?.from_lat || !hostTemplate?.to_lat) {
+                console.warn(`[OTP Verify] Could not find host template coordinates, skipping...`);
+                continue;
+              }
 
               const { data: hostProfile } = await supabase
                 .from("profiles")
@@ -412,8 +434,8 @@ export async function POST(request: NextRequest) {
               console.log(`[OTP Verify] Rider journey: ${riderJourneyDistance.toFixed(0)}m (OSRM: ${!!routeDistanceMeters})`);
 
               const score = calculateMatchScore({
-                hostFrom: { lat: profile.from_lat, lng: profile.from_lng },
-                hostTo: { lat: profile.to_lat, lng: profile.to_lng },
+                hostFrom: { lat: hostTemplate.from_lat, lng: hostTemplate.from_lng },
+                hostTo: { lat: hostTemplate.to_lat, lng: hostTemplate.to_lng },
                 riderPickup: { lat: profile.from_lat, lng: profile.from_lng },
                 riderDestination: { lat: profile.to_lat, lng: profile.to_lng },
                 riderTotalJourneyMeters: riderJourneyDistance,
@@ -422,7 +444,8 @@ export async function POST(request: NextRequest) {
                 hostCollege: hostProfile?.institution,
                 riderCollege: profile.institution,
                 maxDetourMeters: 2000,
-                maxDestinationMeters: 1000
+                maxDestinationMeters: 1000,
+                hostRouteGeometry: hostTemplate.route_geometry
               });
 
               if (score.compatible) {
