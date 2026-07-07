@@ -173,7 +173,7 @@ export async function POST(request: NextRequest) {
         // Fetch Host's template coordinates (BUG FIX: was using rider's coords for both)
         const { data: hostTemplate } = await supabase
           .from("ride_templates")
-          .select("from_lat, from_lng, to_lat, to_lng")
+          .select("from_lat, from_lng, to_lat, to_lng, route_geometry")
           .eq("id", match.template_id)
           .single();
 
@@ -203,7 +203,8 @@ export async function POST(request: NextRequest) {
           maxDetourMeters: 2000,
           maxDestinationMeters: 1000,
           pickupDistanceOverride: match.pickup_distance_meters,
-          destinationDistanceOverride: match.destination_distance_meters
+          destinationDistanceOverride: match.destination_distance_meters,
+          hostRouteGeometry: hostTemplate.route_geometry
         });
 
         console.log(`[Request API] Match score details:`, {

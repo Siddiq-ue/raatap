@@ -207,7 +207,8 @@ export async function POST(request: NextRequest) {
           hostCollege: profile.institution,
           riderCollege: riderProfile?.institution,
           maxDetourMeters: maxDetourMeters,
-          maxDestinationMeters: 1000
+          maxDestinationMeters: 1000,
+          hostRouteGeometry: geometry
         });
 
         if (score.compatible) {
