@@ -108,10 +108,18 @@ export default function UserDetailPage({ params }: { params: Promise<{ userId: s
             </button>
           </div>
           <p className="text-gray-500 mt-1">{profile.institutional_email}</p>
-          <div className="flex gap-4 mt-3 text-sm">
+          <div className="flex flex-wrap gap-2 mt-3 text-sm">
             <span className="bg-gray-100 px-3 py-1 rounded-full text-gray-700 font-medium">Phone: {profile.phone_number || "N/A"}</span>
             <span className="bg-gray-100 px-3 py-1 rounded-full text-gray-700 font-medium">Inst: {profile.institution || "N/A"}</span>
             <span className="bg-gray-100 px-3 py-1 rounded-full text-gray-700 font-medium">Gender: {profile.gender}</span>
+            <span className="bg-gray-100 px-3 py-1 rounded-full text-gray-700 font-medium">
+              Academic Years: {profile.academic_start_year || "N/A"}–{profile.academic_end_year || "N/A"}
+            </span>
+            {profile.is_pursuing === false ? (
+              <span className="bg-red-100 px-3 py-1 rounded-full text-red-700 font-medium">Graduated (not pursuing)</span>
+            ) : (
+              <span className="bg-green-100 px-3 py-1 rounded-full text-green-700 font-medium">Pursuing</span>
+            )}
           </div>
         </div>
       </div>

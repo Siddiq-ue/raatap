@@ -16,6 +16,9 @@ interface FormData {
   gender: string;
   student_id: string;
   institution: string;
+  academic_start_year: string;
+  academic_end_year: string;
+  is_pursuing: boolean | null;
   from_location: string;
   landmark: string;
   to_location: string;
@@ -121,6 +124,9 @@ export default function DashboardContent() {
     gender: "",
     student_id: "",
     institution: "",
+    academic_start_year: "",
+    academic_end_year: "",
+    is_pursuing: null,
     from_location: "",
     landmark: "",
     to_location: "",
@@ -155,6 +161,13 @@ export default function DashboardContent() {
       gender: existingProfile.gender || "",
       student_id: existingProfile.student_id || "",
       institution: existingProfile.institution || "",
+      academic_start_year: existingProfile.academic_start_year?.toString() || "",
+      academic_end_year: existingProfile.academic_end_year?.toString() || "",
+      is_pursuing:
+        existingProfile.is_pursuing === null ||
+        existingProfile.is_pursuing === undefined
+          ? null
+          : existingProfile.is_pursuing,
       from_location: existingProfile.from_location || "",
       landmark: existingProfile.pickup_landmark || "",
       to_location: existingProfile.to_location || "",
@@ -226,14 +239,41 @@ export default function DashboardContent() {
       existingProfile?.institutional_email ?? null,
     );
 
-    setSubmitting(false);
-
     if (error) {
+      setSubmitting(false);
       console.error("Error updating location:", error);
       showNotification("error", "Failed to update location. Please try again.");
       return;
     }
 
+    // The profile's from/to coordinates just changed, but matching runs
+    // against ride_templates/ride_requests, which are only ever snapshotted
+    // once and don't auto-refresh on a plain coordinate update - push the
+    // new location into those rows and re-run matching against it.
+    try {
+      const rematchResponse = await fetch("/api/profile/update-location", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: freshUserId }),
+      });
+
+      if (rematchResponse.ok) {
+        const suggestionsResponse = await fetch("/api/matches/suggestions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: freshUserId }),
+        });
+        if (suggestionsResponse.ok) {
+          setMatchSuggestions(await suggestionsResponse.json());
+        }
+      } else {
+        console.error("Failed to re-run matching after location change:", await rematchResponse.json().catch(() => ({})));
+      }
+    } catch (rematchError) {
+      console.error("Error re-running matching after location change:", rematchError);
+    }
+
+    setSubmitting(false);
     setIsEditingLocation(false);
     setSubmitted(true);
     showNotification("success", "Location updated successfully!");
@@ -852,6 +892,18 @@ export default function DashboardContent() {
       newErrors.institution = "Please enter your institution name";
     if (!formData.student_id)
       newErrors.student_id = "Student ID is required";
+    if (!formData.academic_start_year)
+      newErrors.academic_start_year = "Academic start year is required";
+    if (!formData.academic_end_year)
+      newErrors.academic_end_year = "Academic end year is required";
+    if (
+      formData.academic_start_year &&
+      formData.academic_end_year &&
+      parseInt(formData.academic_end_year) < parseInt(formData.academic_start_year)
+    )
+      newErrors.academic_end_year = "End year cannot be before start year";
+    if (formData.is_pursuing === null)
+      newErrors.is_pursuing = "Please tell us if you're currently a student";
     // Host/Rider preference
     if (!formData.prefer_hosting && !formData.prefer_taking_ride) {
       newErrors.preference = "Select at least one option";
@@ -946,6 +998,9 @@ export default function DashboardContent() {
         gender: formData.gender,
         student_id: formData.student_id,
         institution: finalInstitution,
+        academic_start_year: parseInt(formData.academic_start_year),
+        academic_end_year: parseInt(formData.academic_end_year),
+        is_pursuing: formData.is_pursuing,
         institutional_email: institutionalEmailValue,
         from_location: formData.from_location,
         pickup_landmark: formData.landmark || null,
@@ -2483,6 +2538,119 @@ export default function DashboardContent() {
                   <p className="text-red-500 text-xs mt-1 ml-1">
                     {errors.student_id}
                   </p>
+                )}
+              </div>
+
+              {/* Academic Start/End Year */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2 ml-1">
+                    Academic Start Year
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="e.g., 2023"
+                    value={formData.academic_start_year}
+                    onChange={(e) => {
+                      setFormData((prev) => ({
+                        ...prev,
+                        academic_start_year: e.target.value,
+                      }));
+                      if (errors.academic_start_year)
+                        setErrors((prev) => ({ ...prev, academic_start_year: "" }));
+                    }}
+                    className={`w-full px-4 py-3.5 border-2 rounded-2xl bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-4 transition-all ${errors.academic_start_year ? "border-red-400 focus:border-red-400 focus:ring-red-100" : "border-gray-200 focus:border-[#6675FF] focus:ring-[#6675FF]/10"}`}
+                    required
+                  />
+                  {errors.academic_start_year && (
+                    <p className="text-red-500 text-xs mt-1 ml-1">
+                      {errors.academic_start_year}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2 ml-1">
+                    Academic End Year
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="e.g., 2027"
+                    value={formData.academic_end_year}
+                    onChange={(e) => {
+                      setFormData((prev) => ({
+                        ...prev,
+                        academic_end_year: e.target.value,
+                      }));
+                      if (errors.academic_end_year)
+                        setErrors((prev) => ({ ...prev, academic_end_year: "" }));
+                    }}
+                    className={`w-full px-4 py-3.5 border-2 rounded-2xl bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-4 transition-all ${errors.academic_end_year ? "border-red-400 focus:border-red-400 focus:ring-red-100" : "border-gray-200 focus:border-[#6675FF] focus:ring-[#6675FF]/10"}`}
+                    required
+                  />
+                  {errors.academic_end_year && (
+                    <p className="text-red-500 text-xs mt-1 ml-1">
+                      {errors.academic_end_year}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Currently Pursuing */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2 ml-1">
+                  Are you currently a pursuing student?
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="relative cursor-pointer">
+                    <input
+                      type="radio"
+                      name="is_pursuing"
+                      checked={formData.is_pursuing === true}
+                      onChange={() => {
+                        setFormData((prev) => ({ ...prev, is_pursuing: true }));
+                        if (errors.is_pursuing)
+                          setErrors((prev) => ({ ...prev, is_pursuing: "" }));
+                      }}
+                      className="peer sr-only"
+                    />
+                    <div
+                      className={`px-4 py-3.5 border-2 rounded-2xl bg-white text-center font-medium text-gray-600 transition-all peer-checked:border-[#6675FF] peer-checked:bg-[#6675FF] peer-checked:text-white hover:border-[#6675FF]/50 ${errors.is_pursuing ? "border-red-300" : "border-gray-200"}`}
+                    >
+                      Yes, I'm still studying
+                    </div>
+                  </label>
+                  <label className="relative cursor-pointer">
+                    <input
+                      type="radio"
+                      name="is_pursuing"
+                      checked={formData.is_pursuing === false}
+                      onChange={() => {
+                        setFormData((prev) => ({ ...prev, is_pursuing: false }));
+                        if (errors.is_pursuing)
+                          setErrors((prev) => ({ ...prev, is_pursuing: "" }));
+                      }}
+                      className="peer sr-only"
+                    />
+                    <div
+                      className={`px-4 py-3.5 border-2 rounded-2xl bg-white text-center font-medium text-gray-600 transition-all peer-checked:border-[#6675FF] peer-checked:bg-[#6675FF] peer-checked:text-white hover:border-[#6675FF]/50 ${errors.is_pursuing ? "border-red-300" : "border-gray-200"}`}
+                    >
+                      No, I've graduated
+                    </div>
+                  </label>
+                </div>
+                {errors.is_pursuing && (
+                  <p className="text-red-500 text-xs mt-2 ml-1">
+                    {errors.is_pursuing}
+                  </p>
+                )}
+                {formData.is_pursuing === false && (
+                  <div className="mt-3 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-sm text-amber-800">
+                    Heads up — Raatap currently operates only for enrolled students.
+                    We&apos;ll still save your profile, but our team may reach out
+                    since you&apos;ve indicated you&apos;re no longer pursuing your
+                    degree.
+                  </div>
                 )}
               </div>
 
