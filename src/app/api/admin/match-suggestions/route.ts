@@ -62,6 +62,7 @@ export async function GET(req: NextRequest) {
           to_location,
           departure_time,
           available_seats,
+          route_distance_meters:ride_templates_route_distance_meters,
           profiles!inner(id, full_name, phone_number, institution)
         ),
         ride_requests!inner(
@@ -70,6 +71,7 @@ export async function GET(req: NextRequest) {
           destination_location,
           pickup_lat,
           pickup_lng,
+          route_distance_meters,
           profiles!inner(id, full_name, phone_number, institution)
         )
       `)
@@ -110,6 +112,7 @@ export async function GET(req: NextRequest) {
         to_location: ms.ride_templates.to_location,
         departure_time: ms.ride_templates.departure_time,
         available_seats: ms.ride_templates.available_seats,
+        route_distance_meters: ms.ride_templates.route_distance_meters,
       } : null,
       rider: ms.ride_requests ? {
         id: ms.ride_requests.profiles?.id,
@@ -120,6 +123,7 @@ export async function GET(req: NextRequest) {
         destination_location: ms.ride_requests.destination_location,
         pickup_lat: ms.ride_requests.pickup_lat,
         pickup_lng: ms.ride_requests.pickup_lng,
+        route_distance_meters: ms.ride_requests.route_distance_meters,
       } : null,
     }));
 
