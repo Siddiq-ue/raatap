@@ -9,6 +9,9 @@ interface Profile {
   age: number;
   gender: string;
   institution: string;
+  academic_start_year: number | null;
+  academic_end_year: number | null;
+  is_pursuing: boolean | null;
   institutional_email: string | null;
   rejection_reason: string | null;
   from_location: string;
@@ -227,6 +230,7 @@ export default function AdminUsersPage() {
                     <th className="text-left px-4 py-3.5 font-semibold text-gray-600">Name</th>
                     <th className="text-left px-4 py-3.5 font-semibold text-gray-600">Phone</th>
                     <th className="text-left px-4 py-3.5 font-semibold text-gray-600">Institution</th>
+                    <th className="text-left px-4 py-3.5 font-semibold text-gray-600">Student?</th>
                     <th className="text-left px-4 py-3.5 font-semibold text-gray-600">Role</th>
                     <th className="text-left px-4 py-3.5 font-semibold text-gray-600">Route</th>
                     <th className="text-left px-4 py-3.5 font-semibold text-gray-600">Status</th>
@@ -241,6 +245,13 @@ export default function AdminUsersPage() {
                       </td>
                       <td className="px-4 py-3.5 text-gray-600">{profile.phone_number}</td>
                       <td className="px-4 py-3.5 text-gray-600">{profile.institution}</td>
+                      <td className="px-4 py-3.5">
+                        {profile.is_pursuing === false ? (
+                          <span className="px-2.5 py-1 bg-red-100 text-red-700 text-xs font-medium rounded-full">Graduated</span>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">Pursuing</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3.5">
                         <div className="flex flex-col gap-1 items-start">
                           <div className="flex gap-1">
