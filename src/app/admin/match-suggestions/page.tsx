@@ -10,6 +10,7 @@ interface SuggestionHost {
   to_location: string;
   departure_time: string;
   available_seats: number;
+  route_distance_meters: number | null;
 }
 
 interface SuggestionRider {
@@ -18,6 +19,7 @@ interface SuggestionRider {
   institution: string;
   pickup_location: string;
   destination_location: string;
+  route_distance_meters: number | null;
 }
 
 interface MatchSuggestion {
@@ -183,6 +185,9 @@ export default function AdminMatchSuggestionsPage() {
                           📍 {s.host.from_location} → {s.host.to_location}
                         </p>
                         <p className="text-gray-500 text-xs">🕐 {s.host.departure_time} · {s.host.available_seats} seats</p>
+                        <p className="text-gray-500 text-xs">
+                          🛣️ Host total distance: {s.host.route_distance_meters != null ? `${(s.host.route_distance_meters / 1000).toFixed(1)}km` : "—"}
+                        </p>
                       </div>
                     ) : (
                       <p className="text-sm text-gray-400 italic">Host data unavailable</p>
@@ -207,6 +212,9 @@ export default function AdminMatchSuggestionsPage() {
                         <p className="text-gray-500 text-xs">
                           🏁 Destination: {s.rider.destination_location}
                         </p>
+                        <p className="text-gray-500 text-xs">
+                          🛣️ Rider total distance: {s.rider.route_distance_meters != null ? `${(s.rider.route_distance_meters / 1000).toFixed(1)}km` : "—"}
+                        </p>
                       </div>
                     ) : (
                       <p className="text-sm text-gray-400 italic">Rider data unavailable</p>
@@ -221,6 +229,7 @@ export default function AdminMatchSuggestionsPage() {
                   <span>Detour: <strong>{(s.detour_distance_meters / 1000).toFixed(1)}km</strong></span>
                   <span>Pickup distance: <strong>{(s.pickup_distance_meters / 1000).toFixed(1)}km</strong></span>
                   <span>Overlap: <strong>{(s.overlapping_distance_meters / 1000).toFixed(1)}km</strong></span>
+                  <span>Estimated cost: <strong>₹{Math.round((s.overlapping_distance_meters / 1000) * 4)}</strong></span>
                 </div>
               </div>
             ))}
