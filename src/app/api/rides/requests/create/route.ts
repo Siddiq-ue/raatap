@@ -128,7 +128,8 @@ export async function POST(request: NextRequest) {
         time_flexibility_mins: timeFlexibilityMins,
         days_needed: profile.days_of_commute,
         vehicle_preference: vehiclePreference,
-        gender_preference: genderPreference
+        gender_preference: genderPreference,
+        status: 'active'
       })
       .select("id")
       .single();

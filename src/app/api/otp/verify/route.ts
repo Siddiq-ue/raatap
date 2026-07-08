@@ -368,7 +368,7 @@ export async function POST(request: NextRequest) {
             preferred_arrival_time: profile.leave_home_time,
             days_needed: profile.days_of_commute,
             gender_preference: profile.comfortable_with || 'both',
-            status: 'pending'
+            status: 'active'
           })
           .select("id")
           .single();
