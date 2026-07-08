@@ -69,6 +69,7 @@ export default function DashboardContent() {
   const [rejectionReason, setRejectionReason] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isEditingLocation, setIsEditingLocation] = useState(false);
 
   const [matchSuggestions, setMatchSuggestions] = useState<any[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
@@ -144,6 +145,98 @@ export default function DashboardContent() {
     setNotification({ type, message });
     // Auto-dismiss after 5 seconds
     setTimeout(() => setNotification(null), 5000);
+  };
+
+  const loadProfileIntoFormData = (existingProfile: any) => {
+    setFormData({
+      full_name: existingProfile.full_name || "",
+      phone_number: existingProfile.phone_number || "",
+      age: existingProfile.age?.toString() || "",
+      gender: existingProfile.gender || "",
+      student_id: existingProfile.student_id || "",
+      institution: existingProfile.institution || "",
+      from_location: existingProfile.from_location || "",
+      landmark: existingProfile.pickup_landmark || "",
+      to_location: existingProfile.to_location || "",
+      from_lat: existingProfile.from_lat || null,
+      from_lng: existingProfile.from_lng || null,
+      to_lat: existingProfile.to_lat || null,
+      to_lng: existingProfile.to_lng || null,
+      leave_home_time: existingProfile.leave_home_time || "",
+      leave_college_time: existingProfile.leave_college_time || "",
+      days_of_commute: existingProfile.days_of_commute || [],
+      prefer_hosting: existingProfile.prefer_hosting || false,
+      prefer_taking_ride: existingProfile.prefer_taking_ride || false,
+      vehicle_type: existingProfile.vehicle_type || "",
+      comfortable_with: existingProfile.comfortable_with || "",
+      agreed_to_terms: true,
+      agreed_to_policies: true,
+    });
+  };
+
+  const handleChangeLocation = async () => {
+    if (!user) return;
+
+    const { data: existingProfile } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+
+    if (existingProfile) {
+      loadProfileIntoFormData(existingProfile);
+    }
+
+    setErrors({});
+    setIsEditingLocation(true);
+    setCurrentStep(1);
+    setSubmitted(false);
+  };
+
+  const handleSaveLocation = async () => {
+    const newErrors: Record<string, string> = {};
+    if (!formData.from_location)
+      newErrors.from_location = "Start location is required";
+    if (!formData.to_location)
+      newErrors.to_location = "Destination is required";
+    if (!formData.from_lat || !formData.from_lng)
+      newErrors.from_location = "Please select a valid location from the suggestions";
+    if (!formData.to_lat || !formData.to_lng)
+      newErrors.to_location = "Please select a valid location from the suggestions";
+
+    setErrors(newErrors);
+    if (Object.keys(newErrors).length > 0) {
+      return;
+    }
+
+    const freshUserId = await getFreshUserId();
+    if (!freshUserId) return;
+
+    setSubmitting(true);
+
+    const { data: existingProfile } = await supabase
+      .from("profiles")
+      .select("email_verified, institutional_email")
+      .eq("id", freshUserId)
+      .single();
+
+    const { error } = await upsertProfileRecord(
+      freshUserId,
+      existingProfile?.email_verified ?? false,
+      existingProfile?.institutional_email ?? null,
+    );
+
+    setSubmitting(false);
+
+    if (error) {
+      console.error("Error updating location:", error);
+      showNotification("error", "Failed to update location. Please try again.");
+      return;
+    }
+
+    setIsEditingLocation(false);
+    setSubmitted(true);
+    showNotification("success", "Location updated successfully!");
   };
 
   const handleAcceptMatch = async (matchId: string, riderName: string) => {
@@ -509,6 +602,19 @@ export default function DashboardContent() {
 
                 if (response.ok && isMounted) {
                   const suggestionsData = await response.json();
+                  console.log("🔍 [Dashboard] Raw match_suggestions from DB via /api/matches/suggestions:",
+                    suggestionsData.map((s: any) => ({
+                      id: s.id,
+                      status: s.status,
+                      created_at: s.created_at,
+                      pickup_distance_meters: s.pickup_distance_meters,
+                      destination_distance_meters: s.destination_distance_meters,
+                      overlapping_distance_meters: s.overlapping_distance_meters,
+                      route_match_score: s.route_match_score,
+                      ride_template_id: s.ride_template_id ?? s.ride_template?.id,
+                      ride_request_id: s.ride_request_id ?? s.ride_request?.id,
+                    }))
+                  );
                   setMatchSuggestions(suggestionsData);
                } else if (isMounted) {
                  console.error("Failed to fetch suggestions:", await response.json().catch(() => ({})));
@@ -633,6 +739,7 @@ export default function DashboardContent() {
             full_name: authUser.user_metadata.full_name,
           }));
         }
+        console.log("Dashboard data loaded at:", Date.now());
         setLoading(false);
         return;
       }
@@ -1326,32 +1433,9 @@ export default function DashboardContent() {
                         .select("*")
                         .eq("id", user.id)
                         .single();
-                      
+
                       if (existingProfile) {
-                        setFormData({
-                          full_name: existingProfile.full_name || "",
-                          phone_number: existingProfile.phone_number || "",
-                          age: existingProfile.age?.toString() || "",
-                          gender: existingProfile.gender || "",
-                          student_id: existingProfile.student_id || "",
-                          institution: existingProfile.institution || "",
-                          from_location: existingProfile.from_location || "",
-                          landmark: existingProfile.pickup_landmark || "",
-                          to_location: existingProfile.to_location || "",
-                          from_lat: existingProfile.from_lat || null,
-                          from_lng: existingProfile.from_lng || null,
-                          to_lat: existingProfile.to_lat || null,
-                          to_lng: existingProfile.to_lng || null,
-                          leave_home_time: existingProfile.leave_home_time || "",
-                          leave_college_time: existingProfile.leave_college_time || "",
-                          days_of_commute: existingProfile.days_of_commute || [],
-                          prefer_hosting: existingProfile.prefer_hosting || false,
-                          prefer_taking_ride: existingProfile.prefer_taking_ride || false,
-                          vehicle_type: existingProfile.vehicle_type || "",
-                          comfortable_with: existingProfile.comfortable_with || "",
-                          agreed_to_terms: true,
-                          agreed_to_policies: true,
-                        });
+                        loadProfileIntoFormData(existingProfile);
                       }
                     }
                   }}
@@ -1895,12 +1979,13 @@ export default function DashboardContent() {
                 </div>
               </div>
             )}           {matchSuggestions.length > 0 && (!confirmedPods?.rider_rides?.length) && (
-            <MatchQueue 
+            <MatchQueue
               matchSuggestions={matchSuggestions}
               onAcceptMatch={handleAcceptMatch}
               onSkipMatch={handleSkipMatch}
               onConfirmMatch={handleConfirmMatch}
               onRejectMatch={handleRejectMatch}
+              onChangeLocation={handleChangeLocation}
               user={user}
             />
           )}
@@ -2095,33 +2180,45 @@ export default function DashboardContent() {
         {/* Title */}
         <div className="text-center mb-6 sm:mb-8">
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-semibold text-[#6675FF] mb-2">
-            Verify
+            {isEditingLocation ? "Update Location" : "Verify"}
           </h1>
           <p className="text-gray-500 text-sm sm:text-base">
-            Complete your profile to get started
+            {isEditingLocation
+              ? "Change your pickup and drop-off location"
+              : "Complete your profile to get started"}
           </p>
         </div>
 
         {/* Form Card */}
         <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl shadow-[#6675FF]/10 border border-white/50 p-5 sm:p-8 md:p-12">
           {/* Progress indicator */}
-          <div className="flex items-center justify-center gap-2 mb-8">
-            <div
-              className={`w-3 h-3 rounded-full transition-all ${currentStep === 1 ? "bg-[#6675FF] w-8" : currentStep > 1 ? "bg-[#6675FF]" : "bg-gray-300"}`}
-            ></div>
-            <div
-              className={`w-3 h-3 rounded-full transition-all ${currentStep === 2 ? "bg-[#6675FF] w-8" : currentStep > 2 ? "bg-[#6675FF]" : "bg-gray-300"}`}
-            ></div>
-            <div
-              className={`w-3 h-3 rounded-full transition-all ${currentStep === 3 ? "bg-[#6675FF] w-8" : "bg-gray-300"}`}
-            ></div>
-          </div>
+          {!isEditingLocation && (
+            <div className="flex items-center justify-center gap-2 mb-8">
+              <div
+                className={`w-3 h-3 rounded-full transition-all ${currentStep === 1 ? "bg-[#6675FF] w-8" : currentStep > 1 ? "bg-[#6675FF]" : "bg-gray-300"}`}
+              ></div>
+              <div
+                className={`w-3 h-3 rounded-full transition-all ${currentStep === 2 ? "bg-[#6675FF] w-8" : currentStep > 2 ? "bg-[#6675FF]" : "bg-gray-300"}`}
+              ></div>
+              <div
+                className={`w-3 h-3 rounded-full transition-all ${currentStep === 3 ? "bg-[#6675FF] w-8" : "bg-gray-300"}`}
+              ></div>
+            </div>
+          )}
 
           {/* Back Button & Subtitle */}
           <div className="flex items-center gap-3 mb-6">
-            {(currentStep === 2 || currentStep === 3) && (
+            {(isEditingLocation || currentStep === 2 || currentStep === 3) && (
               <button
-                onClick={handleBack}
+                onClick={() => {
+                  if (isEditingLocation) {
+                    setIsEditingLocation(false);
+                    setErrors({});
+                    setSubmitted(true);
+                  } else {
+                    handleBack();
+                  }
+                }}
                 className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
               >
                 <svg
@@ -2140,7 +2237,9 @@ export default function DashboardContent() {
               </button>
             )}
             <h2 className="text-lg font-medium text-gray-700 flex-1">
-              {currentStep === 1
+              {isEditingLocation
+                ? "Update your pickup and drop-off details"
+                : currentStep === 1
                 ? "Complete your profile for membership"
                 : currentStep === 2
                 ? "Set your preferences"
@@ -2723,10 +2822,15 @@ export default function DashboardContent() {
               </div>
 
               <button
-                onClick={handleNext}
-                className="w-full mt-6 py-4 bg-gradient-to-r from-[#6675FF] to-[#8892ff] text-white font-semibold text-lg rounded-2xl hover:shadow-xl hover:shadow-[#6675FF]/30 transition-all hover:-translate-y-0.5 active:translate-y-0"
+                onClick={isEditingLocation ? handleSaveLocation : handleNext}
+                disabled={submitting}
+                className="w-full mt-6 py-4 bg-gradient-to-r from-[#6675FF] to-[#8892ff] text-white font-semibold text-lg rounded-2xl hover:shadow-xl hover:shadow-[#6675FF]/30 transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60 disabled:hover:translate-y-0"
               >
-                Continue
+                {isEditingLocation
+                  ? submitting
+                    ? "Saving..."
+                    : "Save Location"
+                  : "Continue"}
               </button>
             </div>
           )}
@@ -3276,15 +3380,17 @@ interface MatchQueueProps {
   onSkipMatch: (matchId: string) => void;
   onConfirmMatch: (matchId: string) => void;
   onRejectMatch: (matchId: string) => void;
+  onChangeLocation: () => void;
   user: User | null;
 }
 
-function MatchQueue({ 
-  matchSuggestions, 
-  onAcceptMatch, 
-  onSkipMatch, 
-  onConfirmMatch, 
+function MatchQueue({
+  matchSuggestions,
+  onAcceptMatch,
+  onSkipMatch,
+  onConfirmMatch,
   onRejectMatch,
+  onChangeLocation,
   user
 }: MatchQueueProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -3297,13 +3403,31 @@ function MatchQueue({
   const costPerKm = 4;
 
   // Calculate overlapping distance and estimated cost
-  const overlappingDistanceKm = currentMatch?.overlapping_distance_meters 
+  const overlappingDistanceKm = currentMatch?.overlapping_distance_meters != null
     ? (currentMatch.overlapping_distance_meters / 1000).toFixed(1)
     : null;
-  
-  const estimatedCost = overlappingDistanceKm 
+
+  const estimatedCost = overlappingDistanceKm != null
     ? (parseFloat(overlappingDistanceKm) * costPerKm).toFixed(0)
     : null;
+
+  console.log("🔍 [MatchQueue] Overlapping route / cost contribution breakdown:", {
+    matchId: currentMatch?.id,
+    status: currentMatch?.status,
+    isHostView,
+    host: currentMatch?.ride_template?.profiles?.full_name,
+    rider: currentMatch?.ride_request?.profiles?.full_name,
+    // Straight from match_suggestions in the DB - this is the source of truth,
+    // set once when the match was created (see src/lib/matching.ts / the
+    // otp-verify, admin-verify-user, rides/templates/create, rides/requests/create
+    // API routes for where it's computed and inserted).
+    "1_pickup_distance_meters (host route -> rider pickup)": currentMatch?.pickup_distance_meters,
+    "2_destination_distance_meters (host route -> rider dropoff)": currentMatch?.destination_distance_meters,
+    "3_overlapping_distance_meters (shared segment, from DB)": currentMatch?.overlapping_distance_meters,
+    // Derived purely client-side from the value above:
+    "4_overlappingDistanceKm = overlapping_distance_meters / 1000": overlappingDistanceKm,
+    "5_estimatedCost = overlappingDistanceKm * costPerKm(4)": estimatedCost,
+  });
 
   // Determine queue info based on vehicle type
   const vehicleType = currentMatch?.ride_template?.vehicle_type || currentMatch?.ride_request?.vehicle_preference || 'any';
@@ -3416,6 +3540,16 @@ function MatchQueue({
         {isHostView ? (
           // HOST VIEW - Reviewing Rider Requests
           <>
+            <button
+              onClick={onChangeLocation}
+              className="flex items-center gap-2 text-sm font-medium text-[#6675FF] hover:text-[#5568e3] transition-colors mb-4"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              Change My Location
+            </button>
+
             <div className="flex items-center gap-4 mb-6">
               <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#6675FF] to-[#8892ff] flex items-center justify-center text-white text-xl font-bold">
                 {currentMatch.ride_request?.profiles?.full_name?.charAt(0) || "R"}
