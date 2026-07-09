@@ -342,6 +342,17 @@ export async function POST(req: NextRequest) {
         console.log("[Admin Verify] User is a RIDER, attempting to create ride_request");
 
         if (profile.from_lat && profile.from_lng && profile.to_lat && profile.to_lng) {
+          // Check for existing ride_request (prevent duplicates)
+          const { data: existingRiderRequest } = await supabase
+            .from("ride_requests")
+            .select("id")
+            .eq("rider_id", userId)
+            .eq("status", "active")
+            .single();
+
+          if (existingRiderRequest) {
+            console.log(`[Admin Verify] Rider already has active request: ${existingRiderRequest.id}. Skipping creation.`);
+          } else {
           console.log("[Admin Verify] Fetching OSRM route geometry for rider...");
           
           // Fetch OSRM route geometry for rider's journey
@@ -485,6 +496,7 @@ export async function POST(req: NextRequest) {
               console.log("[Admin Verify] No intersecting ride templates found");
             }
           }
+          } // end of else (no existing request)
         } else {
           console.log("[Admin Verify] ⚠️  Skipping ride_request creation: Missing required profile data");
         }
