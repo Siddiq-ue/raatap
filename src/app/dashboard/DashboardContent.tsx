@@ -63,6 +63,19 @@ export const DAYS = [
   "Sunday",
 ];
 
+// Bounds for academic start/end year selects. Wide enough to cover alumni
+// (is_pursuing = false) and incoming students, but narrow enough that a
+// typo like "30000" or "20003" is structurally impossible to enter - both
+// fields are rendered as <select> dropdowns built from this range, not free
+// text input.
+const CURRENT_YEAR = new Date().getFullYear();
+export const MIN_ACADEMIC_YEAR = CURRENT_YEAR - 15;
+export const MAX_ACADEMIC_YEAR = CURRENT_YEAR + 8;
+export const ACADEMIC_YEARS = Array.from(
+  { length: MAX_ACADEMIC_YEAR - MIN_ACADEMIC_YEAR + 1 },
+  (_, i) => MAX_ACADEMIC_YEAR - i, // newest first
+);
+
 export default function DashboardContent() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -896,8 +909,12 @@ export default function DashboardContent() {
       newErrors.student_id = "Student ID is required";
     if (!formData.academic_start_year)
       newErrors.academic_start_year = "Academic start year is required";
+    else if (!ACADEMIC_YEARS.includes(parseInt(formData.academic_start_year)))
+      newErrors.academic_start_year = `Enter a year between ${MIN_ACADEMIC_YEAR} and ${MAX_ACADEMIC_YEAR}`;
     if (!formData.academic_end_year)
       newErrors.academic_end_year = "Academic end year is required";
+    else if (!ACADEMIC_YEARS.includes(parseInt(formData.academic_end_year)))
+      newErrors.academic_end_year = `Enter a year between ${MIN_ACADEMIC_YEAR} and ${MAX_ACADEMIC_YEAR}`;
     if (
       formData.academic_start_year &&
       formData.academic_end_year &&
@@ -2549,9 +2566,7 @@ export default function DashboardContent() {
                   <label className="block text-sm font-medium text-gray-700 mb-2 ml-1">
                     Academic Start Year
                   </label>
-                  <input
-                    type="number"
-                    placeholder="e.g., 2023"
+                  <select
                     value={formData.academic_start_year}
                     onChange={(e) => {
                       setFormData((prev) => ({
@@ -2561,9 +2576,18 @@ export default function DashboardContent() {
                       if (errors.academic_start_year)
                         setErrors((prev) => ({ ...prev, academic_start_year: "" }));
                     }}
-                    className={`w-full px-4 py-3.5 border-2 rounded-2xl bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-4 transition-all ${errors.academic_start_year ? "border-red-400 focus:border-red-400 focus:ring-red-100" : "border-gray-200 focus:border-[#6675FF] focus:ring-[#6675FF]/10"}`}
+                    className={`w-full px-4 py-3.5 border-2 rounded-2xl bg-white text-gray-800 focus:outline-none focus:ring-4 transition-all ${errors.academic_start_year ? "border-red-400 focus:border-red-400 focus:ring-red-100" : "border-gray-200 focus:border-[#6675FF] focus:ring-[#6675FF]/10"}`}
                     required
-                  />
+                  >
+                    <option value="" disabled>
+                      Select year
+                    </option>
+                    {ACADEMIC_YEARS.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
                   {errors.academic_start_year && (
                     <p className="text-red-500 text-xs mt-1 ml-1">
                       {errors.academic_start_year}
@@ -2575,9 +2599,7 @@ export default function DashboardContent() {
                   <label className="block text-sm font-medium text-gray-700 mb-2 ml-1">
                     Academic End Year
                   </label>
-                  <input
-                    type="number"
-                    placeholder="e.g., 2027"
+                  <select
                     value={formData.academic_end_year}
                     onChange={(e) => {
                       setFormData((prev) => ({
@@ -2587,9 +2609,18 @@ export default function DashboardContent() {
                       if (errors.academic_end_year)
                         setErrors((prev) => ({ ...prev, academic_end_year: "" }));
                     }}
-                    className={`w-full px-4 py-3.5 border-2 rounded-2xl bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-4 transition-all ${errors.academic_end_year ? "border-red-400 focus:border-red-400 focus:ring-red-100" : "border-gray-200 focus:border-[#6675FF] focus:ring-[#6675FF]/10"}`}
+                    className={`w-full px-4 py-3.5 border-2 rounded-2xl bg-white text-gray-800 focus:outline-none focus:ring-4 transition-all ${errors.academic_end_year ? "border-red-400 focus:border-red-400 focus:ring-red-100" : "border-gray-200 focus:border-[#6675FF] focus:ring-[#6675FF]/10"}`}
                     required
-                  />
+                  >
+                    <option value="" disabled>
+                      Select year
+                    </option>
+                    {ACADEMIC_YEARS.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
                   {errors.academic_end_year && (
                     <p className="text-red-500 text-xs mt-1 ml-1">
                       {errors.academic_end_year}
