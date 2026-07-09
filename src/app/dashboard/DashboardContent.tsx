@@ -41,14 +41,16 @@ interface FormData {
 }
 
 export const COLLEGES = [
-  "CBIT",
-  "MGIT",
-  "VNRVJIET",
-  "VNR Vignana Jyothi Institute of Engineering and Technology",
-  "CVR College of Engineering",
-  "Chaitanya deemed university",
-  "Gokaraju Rangaraju Institute of Engineering and Technology",
-  "Other",
+  "Chaitanya Bharathi Institute of Technology",
+  "Mahatma Gandhi Institute of Technology",
+  "Vasavi College of Engineering",
+  "Lords Institute of Engineering & Technology",
+  "KL University (Aziz Nagar)",
+  "Vidya Jyothi Institute of Technology (VJIT)",
+  "Chaitanya (Deemed to be University)",
+  "J B Institute of Engineering and Technology",
+  "Global Institute of Engineering & Technology",
+  "KG Reddy College of Engineering and Technology (KGRCET)",
 ];
 
 export const DAYS = [
