@@ -3594,9 +3594,54 @@ function MatchQueue({
   onChangeLocation,
   user
 }: MatchQueueProps) {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const currentMatch = matchSuggestions[currentIndex];
+  if (matchSuggestions.length === 0) {
+    return null;
+  }
 
+  return (
+    <div className="mt-6 space-y-6">
+      <div className="flex items-center justify-between px-1">
+        <h2 className="text-xl font-semibold text-gray-800">Suggestions</h2>
+        <span className="bg-[#6675FF]/10 text-[#6675FF] px-3 py-1 rounded-full text-xs font-medium">
+          {matchSuggestions.length} {matchSuggestions.length === 1 ? "suggestion" : "suggestions"}
+        </span>
+      </div>
+
+      {matchSuggestions.map((match) => (
+        <MatchCard
+          key={match.id}
+          match={match}
+          user={user}
+          onAcceptMatch={onAcceptMatch}
+          onSkipMatch={onSkipMatch}
+          onConfirmMatch={onConfirmMatch}
+          onRejectMatch={onRejectMatch}
+          onChangeLocation={onChangeLocation}
+        />
+      ))}
+    </div>
+  );
+}
+
+interface MatchCardProps {
+  match: any;
+  user: User | null;
+  onAcceptMatch: (matchId: string, riderName: string) => void;
+  onSkipMatch: (matchId: string) => void;
+  onConfirmMatch: (matchId: string) => void;
+  onRejectMatch: (matchId: string) => void;
+  onChangeLocation: () => void;
+}
+
+function MatchCard({
+  match: currentMatch,
+  user,
+  onAcceptMatch,
+  onSkipMatch,
+  onConfirmMatch,
+  onRejectMatch,
+  onChangeLocation,
+}: MatchCardProps) {
   // Determine if user is host or rider for this match
   const isHostView = currentMatch?.ride_template?.host_id === user?.id;
 
@@ -3612,45 +3657,11 @@ function MatchQueue({
     ? (parseFloat(overlappingDistanceKm) * costPerKm).toFixed(0)
     : null;
 
-  console.log("🔍 [MatchQueue] Overlapping route / cost contribution breakdown:", {
-    matchId: currentMatch?.id,
-    status: currentMatch?.status,
-    isHostView,
-    host: currentMatch?.ride_template?.profiles?.full_name,
-    rider: currentMatch?.ride_request?.profiles?.full_name,
-    // Straight from match_suggestions in the DB - this is the source of truth,
-    // set once when the match was created (see src/lib/matching.ts / the
-    // otp-verify, admin-verify-user, rides/templates/create, rides/requests/create
-    // API routes for where it's computed and inserted).
-    "1_pickup_distance_meters (host route -> rider pickup)": currentMatch?.pickup_distance_meters,
-    "2_destination_distance_meters (host route -> rider dropoff)": currentMatch?.destination_distance_meters,
-    "3_overlapping_distance_meters (shared segment, from DB)": currentMatch?.overlapping_distance_meters,
-    // Derived purely client-side from the value above:
-    "4_overlappingDistanceKm = overlapping_distance_meters / 1000": overlappingDistanceKm,
-    "5_estimatedCost = overlappingDistanceKm * costPerKm(4)": estimatedCost,
-  });
-
-  // Determine queue info based on vehicle type
-  const vehicleType = currentMatch?.ride_template?.vehicle_type || currentMatch?.ride_request?.vehicle_preference || 'any';
-  const queueInfo = vehicleType === '2_wheeler'
-    ? { current: currentIndex + 1, total: 1, label: 'Bike Pool - Single Match' }
-    : { current: currentIndex + 1, total: Math.min(matchSuggestions.length, 3), label: 'Car Pool - Up to 3 Matches' };
-
-  if (!currentMatch) {
-    return (
-      <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl shadow-[#6675FF]/10 overflow-hidden border border-white/50 mt-6">
-        <div className="p-8 text-center">
-          <p className="text-gray-500">Loading match details...</p>
-        </div>
-      </div>
-    );
-  }
-
   // Guard: Check if ride_template or ride_request exists
   if (!currentMatch?.ride_template && !currentMatch?.ride_request) {
     console.error("❌ [Dashboard] Invalid match data:", currentMatch);
     return (
-      <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl shadow-[#6675FF]/10 overflow-hidden border border-white/50 mt-6">
+      <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl shadow-[#6675FF]/10 overflow-hidden border border-white/50">
         <div className="p-8 text-center">
           <p className="text-gray-500">Invalid match data</p>
         </div>
@@ -3658,83 +3669,16 @@ function MatchQueue({
     );
   }
 
-  const handleNext = () => {
-    if (currentIndex < matchSuggestions.length - 1) {
-      setCurrentIndex(currentIndex + 1);
-    }
-  };
-
-  const handlePrev = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex(currentIndex - 1);
-    }
-  };
-
-  const handleActionWithNavigation = (action: () => void, shouldNavigate: boolean = true) => {
-    action();
-    if (shouldNavigate && currentIndex < matchSuggestions.length - 1) {
-      // Navigate to next after action
-      setTimeout(() => {
-        setCurrentIndex(prev => prev + 1);
-      }, 300);
-    }
-  };
-
   return (
-    <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl shadow-[#6675FF]/10 overflow-hidden border border-white/50 mt-6">
-      {/* Header with queue indicator */}
+    <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl shadow-[#6675FF]/10 overflow-hidden border border-white/50">
+      {/* Header */}
       <div className={`p-6 text-white text-center relative ${currentMatch.status === 'accepted' ? 'bg-green-600' : 'bg-[#6675FF]'}`}>
-        <div className="flex items-center justify-between mb-2">
-          <button
-            onClick={handlePrev}
-            disabled={currentIndex === 0}
-            className="p-2 rounded-full hover:bg-white/20 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          
-          <div className="flex-1">
-            <h2 className="text-xl font-semibold mb-1">
-              {isHostView ? 'Review Rider Request' : 'Host Match Found!'}
-            </h2>
-            <p className="opacity-90 text-sm">
-              {isHostView ? 'Accept or skip this rider' : 'Review and confirm this ride'}
-            </p>
-          </div>
-
-          <button
-            onClick={handleNext}
-            disabled={currentIndex >= matchSuggestions.length - 1}
-            className="p-2 rounded-full hover:bg-white/20 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Queue Progress Dots */}
-        <div className="flex justify-center gap-2 mt-4">
-          {matchSuggestions.slice(0, queueInfo.total).map((_, idx) => (
-            <button
-              key={idx}
-              onClick={() => setCurrentIndex(idx)}
-              className={`w-2 h-2 rounded-full transition-all ${
-                idx === currentIndex 
-                  ? 'bg-white w-6' 
-                  : 'bg-white/40 hover:bg-white/60'
-              }`}
-              aria-label={`Go to match ${idx + 1}`}
-            />
-          ))}
-        </div>
-        
-        {/* Queue info badge */}
-        <div className="absolute top-3 right-3 bg-white/20 px-3 py-1 rounded-full text-xs font-medium">
-          {queueInfo.label} • {currentIndex + 1} of {queueInfo.total}
-        </div>
+        <h2 className="text-xl font-semibold mb-1">
+          {isHostView ? 'Review Rider Request' : 'Host Match Found!'}
+        </h2>
+        <p className="opacity-90 text-sm">
+          {isHostView ? 'Accept or skip this rider' : 'Review and confirm this ride'}
+        </p>
       </div>
 
       <div className="p-8">
@@ -3847,13 +3791,13 @@ function MatchQueue({
 
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => handleActionWithNavigation(() => onSkipMatch(currentMatch.id), false)}
+                onClick={() => onSkipMatch(currentMatch.id)}
                 className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium transition-colors"
               >
                 Skip
               </button>
               <button
-                onClick={() => handleActionWithNavigation(() => onAcceptMatch(currentMatch.id, currentMatch.ride_request?.profiles?.full_name), false)}
+                onClick={() => onAcceptMatch(currentMatch.id, currentMatch.ride_request?.profiles?.full_name)}
                 className="flex-1 py-3.5 bg-[#6675FF] hover:bg-[#5b6ae0] text-white rounded-xl font-medium transition-colors shadow-lg shadow-[#6675FF]/20"
               >
                 Accept
@@ -3946,13 +3890,13 @@ function MatchQueue({
 
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => handleActionWithNavigation(() => onRejectMatch(currentMatch.id), false)}
+                onClick={() => onRejectMatch(currentMatch.id)}
                 className="flex-1 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium transition-colors"
               >
                 Reject
               </button>
               <button
-                onClick={() => handleActionWithNavigation(() => onConfirmMatch(currentMatch.id), false)}
+                onClick={() => onConfirmMatch(currentMatch.id)}
                 className="flex-1 py-3.5 bg-[#10b981] hover:bg-[#059669] text-white rounded-xl font-medium transition-colors shadow-lg shadow-[#10b981]/20"
               >
                 Confirm Ride
