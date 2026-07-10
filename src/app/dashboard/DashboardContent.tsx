@@ -1541,13 +1541,13 @@ export default function DashboardContent() {
     }
 
     return (
-      <main className="min-h-screen bg-gradient-to-br from-[#f0f2ff] via-white to-[#e8ebff] flex items-center justify-center px-4 py-8">
+      <main className="min-h-screen bg-gradient-to-br from-[#f0f2ff] via-white to-[#e8ebff] flex justify-center px-4 sm:px-6 lg:px-8 py-8">
         <div className="fixed inset-0 overflow-hidden pointer-events-none">
           <div className="absolute -top-40 -right-40 w-96 h-96 bg-[#6675FF]/10 rounded-full blur-3xl"></div>
           <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-[#6675FF]/10 rounded-full blur-3xl"></div>
         </div>
 
-        <div className="relative w-full max-w-lg">
+        <div className="relative w-full max-w-7xl">
           {/* Toast Notification */}
           {notification && (
             <div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-slide-in ${
@@ -3599,26 +3599,29 @@ function MatchQueue({
   }
 
   return (
-    <div className="mt-6 space-y-6">
-      <div className="flex items-center justify-between px-1">
+    <div className="mt-6">
+      <div className="flex items-center justify-between px-1 mb-6">
         <h2 className="text-xl font-semibold text-gray-800">Suggestions</h2>
         <span className="bg-[#6675FF]/10 text-[#6675FF] px-3 py-1 rounded-full text-xs font-medium">
           {matchSuggestions.length} {matchSuggestions.length === 1 ? "suggestion" : "suggestions"}
         </span>
       </div>
 
-      {matchSuggestions.map((match) => (
-        <MatchCard
-          key={match.id}
-          match={match}
-          user={user}
-          onAcceptMatch={onAcceptMatch}
-          onSkipMatch={onSkipMatch}
-          onConfirmMatch={onConfirmMatch}
-          onRejectMatch={onRejectMatch}
-          onChangeLocation={onChangeLocation}
-        />
-      ))}
+      <div className="flex flex-wrap gap-6">
+        {matchSuggestions.map((match) => (
+          <div key={match.id} className="flex-1 min-w-[320px] max-w-[420px]">
+            <MatchCard
+              match={match}
+              user={user}
+              onAcceptMatch={onAcceptMatch}
+              onSkipMatch={onSkipMatch}
+              onConfirmMatch={onConfirmMatch}
+              onRejectMatch={onRejectMatch}
+              onChangeLocation={onChangeLocation}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
