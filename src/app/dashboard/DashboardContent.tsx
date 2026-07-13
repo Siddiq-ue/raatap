@@ -889,6 +889,18 @@ export default function DashboardContent() {
     return () => subscription.unsubscribe();
   }, [router, user?.id]);
 
+  // Academic years are a mandatory profile field - every path that writes to
+  // the profiles table must go through this so a forgotten field in one
+  // upsert call can never silently persist NULL instead of failing loudly.
+  const getValidatedAcademicYears = (): { startYear: number; endYear: number } | null => {
+    const startYear = parseInt(formData.academic_start_year);
+    const endYear = parseInt(formData.academic_end_year);
+    if (!Number.isInteger(startYear) || !Number.isInteger(endYear)) {
+      return null;
+    }
+    return { startYear, endYear };
+  };
+
   const handleNext = () => {
     // Validate step 1 fields
     const newErrors: Record<string, string> = {};
@@ -1008,6 +1020,13 @@ export default function DashboardContent() {
     const finalInstitution =
       formData.institution === "Other" ? customCollege : formData.institution;
 
+    const academicYears = getValidatedAcademicYears();
+    if (!academicYears) {
+      return {
+        error: { message: "Academic start/end year is required." } as any,
+      };
+    }
+
     return supabase.from("profiles").upsert(
       {
         id: userId,
@@ -1017,8 +1036,8 @@ export default function DashboardContent() {
         gender: formData.gender,
         student_id: formData.student_id,
         institution: finalInstitution,
-        academic_start_year: parseInt(formData.academic_start_year),
-        academic_end_year: parseInt(formData.academic_end_year),
+        academic_start_year: academicYears.startYear,
+        academic_end_year: academicYears.endYear,
         is_pursuing: formData.is_pursuing,
         institutional_email: institutionalEmailValue,
         from_location: formData.from_location,
@@ -1201,6 +1220,14 @@ export default function DashboardContent() {
       // Calculate available seats based on vehicle type (2-wheeler: 1, 4-wheeler: 3)
       const availableSeats = formData.vehicle_type === '2_wheeler' ? 1 : 3;
 
+      const academicYears = getValidatedAcademicYears();
+      if (!academicYears) {
+        setOtpError("Academic start/end year is required.");
+        setOtpLoading(false);
+        setSubmitting(false);
+        return;
+      }
+
       const { error: insertError } = await supabase.from("profiles").upsert(
         {
           id: user?.id,
@@ -1210,6 +1237,9 @@ export default function DashboardContent() {
           gender: formData.gender,
           student_id: formData.student_id,
           institution: finalInstitution,
+          academic_start_year: academicYears.startYear,
+          academic_end_year: academicYears.endYear,
+          is_pursuing: formData.is_pursuing,
           institutional_email: institutionalEmail,
           from_location: formData.from_location,
           pickup_landmark: formData.landmark || null,
@@ -1333,6 +1363,13 @@ export default function DashboardContent() {
       // Calculate available seats based on vehicle type (2-wheeler: 1, 4-wheeler: 3)
       const availableSeats = formData.vehicle_type === '2_wheeler' ? 1 : 3;
 
+      const academicYears = getValidatedAcademicYears();
+      if (!academicYears) {
+        setOtpError("Academic start/end year is required.");
+        setSubmitting(false);
+        return;
+      }
+
       const { error: insertError } = await supabase.from("profiles").upsert(
         {
           id: user?.id,
@@ -1342,6 +1379,9 @@ export default function DashboardContent() {
           gender: formData.gender,
           student_id: formData.student_id,
           institution: finalInstitution,
+          academic_start_year: academicYears.startYear,
+          academic_end_year: academicYears.endYear,
+          is_pursuing: formData.is_pursuing,
           institutional_email: null,
           from_location: formData.from_location,
           pickup_landmark: formData.landmark || null,
