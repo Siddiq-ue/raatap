@@ -49,33 +49,6 @@ function getHaversineDistance(p1: GeoPoint, p2: GeoPoint): number {
 }
 
 /**
- * Check if a point is near a route segment
- */
-function isPointOnRoute(from: GeoPoint, to: GeoPoint, target: GeoPoint, threshold = 500): boolean {
-  const distFromStart = getHaversineDistance(from, target);
-  const distFromEnd = getHaversineDistance(to, target);
-  const totalRouteLength = getHaversineDistance(from, to);
-  
-  const minDistToRoute = Math.min(
-    distFromStart,
-    distFromEnd,
-    Math.abs(distFromStart + distFromEnd - totalRouteLength)
-  );
-  
-  return minDistToRoute <= threshold;
-}
-
-/**
- * Get fractional position (0-1) of a point along the route
- */
-function getFractionAlongRoute(from: GeoPoint, to: GeoPoint, target: GeoPoint): number {
-  const totalLength = getHaversineDistance(from, to);
-  if (totalLength < 1) return 0;
-  const distFromStart = getHaversineDistance(from, target);
-  return Math.max(0, Math.min(1, distFromStart / totalLength));
-}
-
-/**
  * Project a lat/lng point into local planar meters anchored at `origin`
  * (equirectangular approximation). Accurate to within a few meters at
  * commute-route scale, which is all a point-to-polyline projection needs.
@@ -142,73 +115,151 @@ function projectOntoPolyline(
 }
 
 /**
- * Pull a flat [lng, lat][] coordinate array out of whatever shape route
- * geometry arrives in - a GeoJSON LineString (from OSRM, or a PostGIS
- * geography column serialized by PostgREST) or a raw coordinate array.
+ * Parse a PostGIS hex-encoded (E)WKB LineString - the default text form
+ * Postgres/PostgREST return for `geography`/`geometry` columns selected
+ * directly (e.g. "0102000020E6100000...") - into [lng, lat][] pairs.
+ * Supabase never hands back GeoJSON for these columns unless the query
+ * explicitly wraps them in ST_AsGeoJSON, so this is the common case in
+ * practice, not a fallback.
  */
-function extractLineCoords(geometry: any): [number, number][] | null {
-  const coords = Array.isArray(geometry) ? geometry : geometry?.coordinates;
-  if (!Array.isArray(coords) || coords.length < 2) return null;
+function parseWkbHexLineString(hex: string): [number, number][] | null {
+  if (!/^[0-9a-fA-F]+$/.test(hex) || hex.length % 2 !== 0 || hex.length < 18) return null;
+
+  const buf = Buffer.from(hex, "hex");
+  let offset = 0;
+
+  const littleEndian = buf.readUInt8(offset) === 1;
+  offset += 1;
+
+  const readUInt32 = () => {
+    const v = littleEndian ? buf.readUInt32LE(offset) : buf.readUInt32BE(offset);
+    offset += 4;
+    return v;
+  };
+  const readDouble = () => {
+    const v = littleEndian ? buf.readDoubleLE(offset) : buf.readDoubleBE(offset);
+    offset += 8;
+    return v;
+  };
+
+  const geomType = readUInt32();
+  const hasSrid = (geomType & 0x20000000) !== 0;
+  if ((geomType & 0xff) !== 2) return null; // not a LineString
+
+  if (hasSrid) readUInt32(); // discard SRID, we only need coordinates
+
+  const numPoints = readUInt32();
+  if (!Number.isFinite(numPoints) || numPoints < 2) return null;
+  if (offset + numPoints * 16 > buf.length) return null; // truncated/corrupt buffer
+
+  const coords: [number, number][] = [];
+  for (let i = 0; i < numPoints; i++) {
+    const x = readDouble();
+    const y = readDouble();
+    coords.push([x, y]);
+  }
   return coords;
 }
 
 /**
- * Calculate the overlapping distance between the host's route and the
- * rider's pickup -> dropoff segment.
- *
- * When the host's actual route geometry (the real, road-following polyline)
- * is available, the rider's points are projected directly onto it. This is
- * what makes the overlap correct for routes that bend - a straight chord
- * between the host's endpoints can sit far from where the road (and the
- * rider) actually is, which was silently zeroing out valid overlaps. Falls
- * back to the straight-line chord approximation when no geometry is passed.
+ * Parse WKT/EWKT LineString text (e.g. "SRID=4326;LINESTRING(lng lat, ...)"
+ * or "LINESTRING(lng lat, ...)") into [lng, lat][] pairs. Some columns in
+ * this schema store route geometry as plain text rather than a native
+ * PostGIS type, which comes back this way instead of hex WKB.
  */
-function calculateOverlappingDistance(
+function parseWktLineString(text: string): [number, number][] | null {
+  const match = text.match(/LINESTRING\s*\(([^)]+)\)/i);
+  if (!match) return null;
+
+  const coords = match[1].split(",").map((pair) => {
+    const [lng, lat] = pair.trim().split(/\s+/).map(Number);
+    return [lng, lat] as [number, number];
+  });
+
+  return coords.length >= 2 && coords.every(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat))
+    ? coords
+    : null;
+}
+
+/**
+ * Pull a flat [lng, lat][] coordinate array out of whatever shape route
+ * geometry arrives in: a raw coordinate array, a GeoJSON LineString, hex
+ * WKB (the default for a PostGIS geography/geometry column selected as-is
+ * via Supabase), or WKT/EWKT text.
+ */
+function extractLineCoords(geometry: any): [number, number][] | null {
+  if (Array.isArray(geometry)) {
+    return geometry.length >= 2 ? geometry : null;
+  }
+  if (typeof geometry === "string") {
+    return parseWkbHexLineString(geometry) ?? parseWktLineString(geometry);
+  }
+  const coords = geometry?.coordinates;
+  return Array.isArray(coords) && coords.length >= 2 ? coords : null;
+}
+
+/**
+ * Project the rider's pickup and destination onto the host's route - the
+ * real, road-following polyline when available, otherwise the straight
+ * chord between the host's endpoints - and report, for each point, how far
+ * the rider would have to travel to reach the route and how far along the
+ * route that point sits.
+ *
+ * The host never detours in this app's model: they drive their route exactly
+ * as planned, and the rider gets themself to wherever that route already
+ * passes closest. So "distance to route" here - not distance to the host's
+ * fixed start/end address - is what "pickup distance" and "destination
+ * distance" should mean everywhere they're used (the compatibility gate,
+ * the match score, and the overlap calculation below all share this one
+ * projection so they can never disagree about where the route actually is).
+ */
+function projectRiderOntoHostRoute(
   hostFrom: GeoPoint,
   hostTo: GeoPoint,
   riderPickup: GeoPoint,
-  riderDest: GeoPoint,
-  pickupThreshold = 500,
-  destThreshold = 500,
+  riderDestination: GeoPoint,
   hostRouteGeometry?: any
-): number {
-  const riderSegmentLength = getHaversineDistance(riderPickup, riderDest);
+): {
+  pickup: { distanceToRoute: number; distanceAlong: number };
+  destination: { distanceToRoute: number; distanceAlong: number };
+  hostRouteLength: number;
+} {
+  const hostRouteCoords = extractLineCoords(hostRouteGeometry) ??
+    ([[hostFrom.lng, hostFrom.lat], [hostTo.lng, hostTo.lat]] as [number, number][]);
 
+  const pickup = projectOntoPolyline(hostRouteCoords, riderPickup);
+  const destination = projectOntoPolyline(hostRouteCoords, riderDestination);
+
+  return {
+    pickup: { distanceToRoute: pickup.distanceToRoute, distanceAlong: pickup.distanceAlong },
+    destination: { distanceToRoute: destination.distanceToRoute, distanceAlong: destination.distanceAlong },
+    hostRouteLength: pickup.totalLength,
+  };
+}
+
+/**
+ * Distance along the host's route between the rider's pickup and
+ * destination projections - the segment of the host's trip the rider
+ * actually shares. Zero if either point is too far from the route to
+ * count as "on it," or if the destination projects behind the pickup
+ * (the rider's leg runs the wrong way along the route).
+ */
+function overlapFromProjection(
+  projection: ReturnType<typeof projectRiderOntoHostRoute>,
+  riderSegmentLength: number,
+  pickupThreshold: number,
+  destThreshold: number
+): number {
   if (riderSegmentLength < 10) {
     return 0;
   }
 
-  const hostRouteCoords = extractLineCoords(hostRouteGeometry);
-
-  if (hostRouteCoords) {
-    const pickupProjection = projectOntoPolyline(hostRouteCoords, riderPickup);
-    const destProjection = projectOntoPolyline(hostRouteCoords, riderDest);
-
-    if (pickupProjection.distanceToRoute > pickupThreshold || destProjection.distanceToRoute > destThreshold) {
-      return 0;
-    }
-
-    if (destProjection.distanceAlong >= pickupProjection.distanceAlong) {
-      return destProjection.distanceAlong - pickupProjection.distanceAlong;
-    }
+  if (projection.pickup.distanceToRoute > pickupThreshold || projection.destination.distanceToRoute > destThreshold) {
     return 0;
   }
 
-  // Fallback: no route geometry available, approximate with the straight
-  // chord between the host's start and end points.
-  const hostRouteDistance = getHaversineDistance(hostFrom, hostTo);
-  const pickupOnRoute = isPointOnRoute(hostFrom, hostTo, riderPickup, pickupThreshold);
-  const destOnRoute = isPointOnRoute(hostFrom, hostTo, riderDest, destThreshold);
-
-  if (!pickupOnRoute || !destOnRoute) {
-    return 0;
-  }
-
-  const pickupFraction = getFractionAlongRoute(hostFrom, hostTo, riderPickup);
-  const destFraction = getFractionAlongRoute(hostFrom, hostTo, riderDest);
-
-  if (destFraction >= pickupFraction) {
-    return (destFraction - pickupFraction) * hostRouteDistance;
+  if (projection.destination.distanceAlong >= projection.pickup.distanceAlong) {
+    return projection.destination.distanceAlong - projection.pickup.distanceAlong;
   }
   return 0;
 }
@@ -279,9 +330,18 @@ export function calculateMatchScore({
   pickupDistanceOverride?: number;
   destinationDistanceOverride?: number;
 }): MatchScoreResult {
-  const pickupDistance = pickupDistanceOverride ?? getHaversineDistance(hostFrom, riderPickup);
-  const destinationDistance = destinationDistanceOverride ?? getHaversineDistance(hostTo, riderDestination);
-  const hostRouteDistance = getHaversineDistance(hostFrom, hostTo);
+  // The host drives their route exactly as planned and never detours - the
+  // rider gets themself to wherever the route already passes closest. So
+  // "pickup distance" / "destination distance" mean distance-to-the-route,
+  // not distance-to-the-host's-fixed-start/end-address. pickupDistanceOverride
+  // /destinationDistanceOverride (from the SQL candidate search, which already
+  // measures point-to-route distance) take precedence when supplied; otherwise
+  // this same projection also drives the overlap calculation below, so the
+  // two can never disagree about where the route is.
+  const projection = projectRiderOntoHostRoute(hostFrom, hostTo, riderPickup, riderDestination, hostRouteGeometry);
+  const pickupDistance = pickupDistanceOverride ?? projection.pickup.distanceToRoute;
+  const destinationDistance = destinationDistanceOverride ?? projection.destination.distanceToRoute;
+  const hostRouteDistance = projection.hostRouteLength;
   // 1. Gender Compatibility Check
   const genderCompatible = 
     hostGenderPreference === 'both' ||
@@ -345,33 +405,15 @@ export function calculateMatchScore({
   }
 
   // 4. Calculate Overlapping Distance
-  // Project the rider's pickup/destination onto the host's actual route (real
-  // road-following geometry when available, else the straight chord between
-  // hostFrom/hostTo) and take the distance between them along it, capped by
-  // the rider's own journey distance so they're never charged for more than
-  // they travel.
-  const hostRouteCoords = extractLineCoords(hostRouteGeometry);
-  let overlappingDistance = calculateOverlappingDistance(
-    hostFrom,
-    hostTo,
-    riderPickup,
-    riderDestination,
-    maxDetourMeters,
-    maxDestinationMeters,
-    hostRouteGeometry
-  );
+  // Distance along the host's route between the rider's pickup and
+  // destination projections (computed above), capped by the rider's own
+  // journey distance so they're never charged for more than they travel.
+  const riderSegmentLength = getHaversineDistance(riderPickup, riderDestination);
+  let overlappingDistance = overlapFromProjection(projection, riderSegmentLength, maxDetourMeters, maxDestinationMeters);
 
   if (riderTotalJourneyMeters > 0) {
     overlappingDistance = Math.min(overlappingDistance, riderTotalJourneyMeters);
   }
-
-  // When real route geometry is available, report its actual (road-following)
-  // length instead of the straight chord - it's a more accurate "host route
-  // distance" and keeps overlap_ratio/host_route_distance consistent with how
-  // overlappingDistance was actually computed above.
-  const reportedHostRouteDistance = hostRouteCoords
-    ? projectOntoPolyline(hostRouteCoords, hostTo).totalLength
-    : hostRouteDistance;
 
   const overlapRatio = riderTotalJourneyMeters > 0
     ? overlappingDistance / riderTotalJourneyMeters
@@ -405,8 +447,8 @@ export function calculateMatchScore({
     overlapping_distance_meters: Math.round(overlappingDistance),
     overlapping_distance_km: parseFloat((overlappingDistance / 1000).toFixed(2)),
     overlap_ratio: parseFloat(overlapRatio.toFixed(2)),
-    host_route_distance_meters: Math.round(reportedHostRouteDistance),
-    host_route_distance_km: parseFloat((reportedHostRouteDistance / 1000).toFixed(2)),
+    host_route_distance_meters: Math.round(hostRouteDistance),
+    host_route_distance_km: parseFloat((hostRouteDistance / 1000).toFixed(2)),
     same_college: sameCollege,
     reason: sameCollege ? 'Compatible route found (Same College!)' : 'Compatible route found via API'
   };

@@ -402,7 +402,7 @@ export async function POST(request: NextRequest) {
               // route coordinates (was using rider's own profile coords for both)
               const { data: hostTemplate } = await supabase
                 .from("ride_templates")
-                .select("available_seats, seats_taken, from_lat, from_lng, to_lat, to_lng, route_geometry")
+                .select("available_seats, seats_taken, from_lat, from_lng, to_lat, to_lng, route_geometry, max_detour_meters")
                 .eq("id", match.template_id)
                 .single();
 
@@ -443,7 +443,7 @@ export async function POST(request: NextRequest) {
                 riderGenderPreference: profile.comfortable_with || 'both',
                 hostCollege: hostProfile?.institution,
                 riderCollege: profile.institution,
-                maxDetourMeters: 2000,
+                maxDetourMeters: hostTemplate.max_detour_meters ?? 2000,
                 maxDestinationMeters: 1000,
                 hostRouteGeometry: hostTemplate.route_geometry
               });
