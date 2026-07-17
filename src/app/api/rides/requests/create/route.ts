@@ -191,7 +191,7 @@ export async function POST(request: NextRequest) {
         // Fetch Host's template coordinates (BUG FIX: was using rider's coords for both)
         const { data: hostTemplate } = await supabase
           .from("ride_templates")
-          .select("from_lat, from_lng, to_lat, to_lng, route_geometry")
+          .select("from_lat, from_lng, to_lat, to_lng, route_geometry, max_detour_meters")
           .eq("id", match.template_id)
           .single();
 
@@ -218,7 +218,7 @@ export async function POST(request: NextRequest) {
           riderTotalJourneyMeters: riderJourneyDistance,
           hostGenderPreference: hostProfile?.comfortable_with || 'both',
           riderGenderPreference: genderPreference,
-          maxDetourMeters: 2000,
+          maxDetourMeters: hostTemplate.max_detour_meters ?? 2000,
           maxDestinationMeters: 1000,
           pickupDistanceOverride: match.pickup_distance_meters,
           destinationDistanceOverride: match.destination_distance_meters,

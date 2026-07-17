@@ -1,0 +1,39 @@
+-- =================================================================
+-- Disable the legacy auto-match triggers (database/deploy_osrm_matching.sql)
+-- =================================================================
+-- ride_requests and ride_templates both had an AFTER INSERT trigger that
+-- ran generate_match_suggestions_for_ride_request()/_template(), scoring
+-- the new row against every other active row in the system with NO
+-- geographic pre-filter - compatibility was decided purely by
+-- calculate_route_match_score()'s OSRM real-driving-detour check
+-- (<=5000m added driving distance).
+--
+-- That is a fundamentally different, much more permissive standard than
+-- the JS API routes (rides/requests/create, rides/templates/create,
+-- otp/verify, admin/verify-user), which pre-filter candidates via
+-- find_intersecting_templates()/find_intersecting_requests() - requiring
+-- the pickup/destination to fall within the host's configured
+-- max_detour_meters of the host's ACTUAL route geometry before a match is
+-- even considered.
+--
+-- Because OSRM can often thread an efficient road path to a pickup point
+-- that is geographically far from the host's route (added driving
+-- distance can be small even when the point isn't "on the way" in any
+-- meaningful sense), this trigger path could - and did - surface matches
+-- the stricter JS path would have correctly rejected. Confirmed on
+-- match_suggestions row 893d8b2e-3ae9-4ca0-9b06-c2a4fd881888: a pickup
+-- point ~6.1km off the host's real route (well outside the host's
+-- configured 2000m tolerance) was still suggested at a 26% match score,
+-- because the trigger's 5000m OSRM-detour gate doesn't check
+-- geometric proximity to the route at all.
+--
+-- Fix: drop both triggers so match generation only happens through the
+-- JS API routes' stricter, geometry-aware path. The underlying
+-- generate_match_suggestions_for_ride_request/_template() and
+-- calculate_route_match_score() functions are left in place (unused)
+-- in case a controlled, manually-invoked backfill/regeneration path is
+-- wanted later - nothing in the app code calls them directly today.
+-- =================================================================
+
+DROP TRIGGER IF EXISTS on_ride_request_created_auto_match ON ride_requests;
+DROP TRIGGER IF EXISTS on_ride_template_created_auto_match ON ride_templates;

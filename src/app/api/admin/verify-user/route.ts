@@ -429,7 +429,7 @@ export async function POST(req: NextRequest) {
                 // calculation compare the rider's route against itself).
                 const { data: hostTemplate } = await supabase
                   .from("ride_templates")
-                  .select("from_lat, from_lng, to_lat, to_lng, route_geometry")
+                  .select("from_lat, from_lng, to_lat, to_lng, route_geometry, max_detour_meters")
                   .eq("id", match.template_id)
                   .single();
 
@@ -448,7 +448,7 @@ export async function POST(req: NextRequest) {
                   riderGenderPreference: profile.comfortable_with || 'both',
                   hostCollege: hostProfile?.institution,
                   riderCollege: profile.institution,
-                  maxDetourMeters: 2000,
+                  maxDetourMeters: hostTemplate.max_detour_meters ?? 2000,
                   maxDestinationMeters: 1000,
                   hostRouteGeometry: hostTemplate.route_geometry
                 });
