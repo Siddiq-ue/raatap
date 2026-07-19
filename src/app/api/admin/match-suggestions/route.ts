@@ -76,7 +76,13 @@ export async function GET(req: NextRequest) {
         )
       `)
       .order("created_at", { ascending: false })
-      .range(offset, offset + limit - 1);
+      .range(offset, offset + limit - 1)
+      // A 0%-score / 0km-overlap row isn't a real match suggestion - it's
+      // noise from the retired legacy trigger that had no geometry check.
+      // Still shown for accepted/confirmed rows even at 0%, since those
+      // reflect a real user commitment that needs manual review, not
+      // something to hide from the list.
+      .or("overlapping_distance_meters.gt.0,status.eq.accepted,status.eq.confirmed");
 
     if (status && status !== "all") {
       query = query.eq("status", status);
@@ -139,7 +145,8 @@ export async function GET(req: NextRequest) {
 
     const { count } = await supabase
       .from("match_suggestions")
-      .select("*", { count: "exact", head: true });
+      .select("*", { count: "exact", head: true })
+      .or("overlapping_distance_meters.gt.0,status.eq.accepted,status.eq.confirmed");
 
     return NextResponse.json({
       suggestions,

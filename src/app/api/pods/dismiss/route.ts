@@ -125,10 +125,13 @@ export async function POST(request: NextRequest) {
 
     // 5. Update ride_request status back to 'active' so rider can be matched with other hosts
     if (podMember.ride_request_id) {
-      await supabase
+      const { error: reactivateError } = await supabase
         .from("ride_requests")
         .update({ status: "active" })
         .eq("id", podMember.ride_request_id);
+      if (reactivateError) {
+        console.error("❌ [API] Failed to reactivate ride_request after dismiss:", reactivateError);
+      }
     }
 
     // Log activity for pod
