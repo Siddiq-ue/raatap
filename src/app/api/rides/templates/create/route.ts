@@ -169,6 +169,13 @@ export async function POST(request: NextRequest) {
           .eq("id", match.rider_id)
           .single();
 
+        // Fetch rider's own real route geometry for road-connectivity-aware overlap
+        const { data: riderRequestGeometry } = await supabase
+          .from("ride_requests")
+          .select("route_geometry")
+          .eq("id", match.request_id)
+          .single();
+
         // Check for red flags - skip if blocked
         const { hasRedFlag, reason: blockReason } = await checkRedFlag(supabase as any, userId, match.rider_id);
         if (hasRedFlag) {
@@ -208,7 +215,8 @@ export async function POST(request: NextRequest) {
           riderCollege: riderProfile?.institution,
           maxDetourMeters: maxDetourMeters,
           maxDestinationMeters: 1000,
-          hostRouteGeometry: geometry
+          hostRouteGeometry: geometry,
+          riderRouteGeometry: riderRequestGeometry?.route_geometry
         });
 
         if (score.compatible) {
