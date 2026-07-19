@@ -125,23 +125,6 @@ export async function POST(request: NextRequest) {
       console.warn(`[Request API] OSRM route fetch failed, will use straight-line distance`);
     }
 
-    // 3. Check for existing active ride_request (prevent duplicates)
-    const { data: existingRequest } = await supabase
-      .from("ride_requests")
-      .select("id")
-      .eq("rider_id", userId)
-      .eq("status", "active")
-      .single();
-
-    if (existingRequest) {
-      console.log(`[Request API] Rider already has active request: ${existingRequest.id}. Skipping creation.`);
-      return NextResponse.json({ 
-        success: true, 
-        ride_request_id: existingRequest.id, 
-        message: "You already have an active ride request." 
-      });
-    }
-
     // 4. Insert Ride Request with geometry
     const { data: requestRecord, error: insertError } = await supabase
       .from("ride_requests")
