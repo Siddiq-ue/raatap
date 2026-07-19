@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getRouteGeometry } from "@/lib/osrm";
-import { calculateMatchScore, checkRedFlag } from "@/lib/matching";
+import { calculateMatchScoreWithRoadDistance, checkRedFlag } from "@/lib/matching";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -196,7 +196,7 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        const score = calculateMatchScore({
+        const score = await calculateMatchScoreWithRoadDistance({
           hostFrom: { lat: profile.from_lat, lng: profile.from_lng },
           hostTo: { lat: profile.to_lat, lng: profile.to_lng },
           riderPickup: { lat: riderPickupLat, lng: riderPickupLng },

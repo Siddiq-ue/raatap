@@ -6,6 +6,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import { getRouteWithFallback } from "./osrm";
 
 export interface GeoPoint {
   lat: number;
@@ -66,20 +67,24 @@ function toLocalMeters(origin: GeoPoint, point: GeoPoint): { x: number; y: numbe
  * Project `target` onto segment [segStart, segEnd]. Returns the
  * perpendicular distance to the segment and the fraction (0-1) along it.
  */
-function projectOntoSegment(segStart: GeoPoint, segEnd: GeoPoint, target: GeoPoint): { distanceMeters: number; fraction: number } {
+function projectOntoSegment(segStart: GeoPoint, segEnd: GeoPoint, target: GeoPoint): { distanceMeters: number; fraction: number; point: GeoPoint } {
   const p2 = toLocalMeters(segStart, segEnd);
   const p = toLocalMeters(segStart, target);
   const lenSq = p2.x * p2.x + p2.y * p2.y;
 
   if (lenSq < 0.01) {
-    return { distanceMeters: getHaversineDistance(segStart, target), fraction: 0 };
+    return { distanceMeters: getHaversineDistance(segStart, target), fraction: 0, point: segStart };
   }
 
   const t = Math.max(0, Math.min(1, (p.x * p2.x + p.y * p2.y) / lenSq));
   const dx = p.x - t * p2.x;
   const dy = p.y - t * p2.y;
 
-  return { distanceMeters: Math.sqrt(dx * dx + dy * dy), fraction: t };
+  return {
+    distanceMeters: Math.sqrt(dx * dx + dy * dy),
+    fraction: t,
+    point: { lat: segStart.lat + t * (segEnd.lat - segStart.lat), lng: segStart.lng + t * (segEnd.lng - segStart.lng) },
+  };
 }
 
 /**
@@ -91,27 +96,29 @@ function projectOntoSegment(segStart: GeoPoint, segEnd: GeoPoint, target: GeoPoi
 function projectOntoPolyline(
   coords: [number, number][],
   target: GeoPoint
-): { distanceAlong: number; distanceToRoute: number; totalLength: number } {
+): { distanceAlong: number; distanceToRoute: number; totalLength: number; point: GeoPoint } {
   let cumulative = 0;
   let bestDistanceToRoute = Infinity;
   let bestDistanceAlong = 0;
+  let bestPoint: GeoPoint = { lng: coords[0][0], lat: coords[0][1] };
 
   for (let i = 0; i < coords.length - 1; i++) {
     const segStart: GeoPoint = { lng: coords[i][0], lat: coords[i][1] };
     const segEnd: GeoPoint = { lng: coords[i + 1][0], lat: coords[i + 1][1] };
     const segLength = getHaversineDistance(segStart, segEnd);
 
-    const { distanceMeters, fraction } = projectOntoSegment(segStart, segEnd, target);
+    const { distanceMeters, fraction, point } = projectOntoSegment(segStart, segEnd, target);
 
     if (distanceMeters < bestDistanceToRoute) {
       bestDistanceToRoute = distanceMeters;
       bestDistanceAlong = cumulative + fraction * segLength;
+      bestPoint = point;
     }
 
     cumulative += segLength;
   }
 
-  return { distanceAlong: bestDistanceAlong, distanceToRoute: bestDistanceToRoute, totalLength: cumulative };
+  return { distanceAlong: bestDistanceAlong, distanceToRoute: bestDistanceToRoute, totalLength: cumulative, point: bestPoint };
 }
 
 /**
@@ -220,8 +227,8 @@ function projectRiderOntoHostRoute(
   riderDestination: GeoPoint,
   hostRouteGeometry?: any
 ): {
-  pickup: { distanceToRoute: number; distanceAlong: number };
-  destination: { distanceToRoute: number; distanceAlong: number };
+  pickup: { distanceToRoute: number; distanceAlong: number; point: GeoPoint };
+  destination: { distanceToRoute: number; distanceAlong: number; point: GeoPoint };
   hostRouteLength: number;
 } {
   const hostRouteCoords = extractLineCoords(hostRouteGeometry) ??
@@ -231,8 +238,8 @@ function projectRiderOntoHostRoute(
   const destination = projectOntoPolyline(hostRouteCoords, riderDestination);
 
   return {
-    pickup: { distanceToRoute: pickup.distanceToRoute, distanceAlong: pickup.distanceAlong },
-    destination: { distanceToRoute: destination.distanceToRoute, distanceAlong: destination.distanceAlong },
+    pickup: { distanceToRoute: pickup.distanceToRoute, distanceAlong: pickup.distanceAlong, point: pickup.point },
+    destination: { distanceToRoute: destination.distanceToRoute, distanceAlong: destination.distanceAlong, point: destination.point },
     hostRouteLength: pickup.totalLength,
   };
 }
@@ -310,7 +317,6 @@ export function calculateMatchScore({
   maxDetourMeters = 2000,
   maxDestinationMeters = 1000,
   hostRouteGeometry,
-  riderRouteGeometry,
   pickupDistanceOverride,
   destinationDistanceOverride,
 }: {
@@ -326,7 +332,6 @@ export function calculateMatchScore({
   maxDetourMeters?: number;
   maxDestinationMeters?: number;
   hostRouteGeometry?: any;
-  riderRouteGeometry?: any;
   pickupDistanceOverride?: number;
   destinationDistanceOverride?: number;
 }): MatchScoreResult {
@@ -415,6 +420,30 @@ export function calculateMatchScore({
     overlappingDistance = Math.min(overlappingDistance, riderTotalJourneyMeters);
   }
 
+  // 4b. A match only makes sense if the rider actually shares part of the
+  // host's route, travelling the same direction the host is already
+  // driving - being close to the road isn't enough on its own. This is
+  // what rejects e.g. a rider standing right next to the route but wanting
+  // to go the opposite way: pickup/destination distance can both be tiny
+  // while overlap is still genuinely zero.
+  if (overlappingDistance <= 0) {
+    return {
+      compatible: false,
+      match_score: 0,
+      pickup_distance_meters: Math.round(pickupDistance),
+      pickup_distance_km: parseFloat((pickupDistance / 1000).toFixed(2)),
+      destination_distance_meters: Math.round(destinationDistance),
+      destination_distance_km: parseFloat((destinationDistance / 1000).toFixed(2)),
+      overlapping_distance_meters: 0,
+      overlapping_distance_km: 0,
+      overlap_ratio: 0,
+      host_route_distance_meters: Math.round(hostRouteDistance),
+      host_route_distance_km: parseFloat((hostRouteDistance / 1000).toFixed(2)),
+      same_college: false,
+      reason: 'No shared route with host (wrong direction or no overlap)'
+    };
+  }
+
   const overlapRatio = riderTotalJourneyMeters > 0
     ? overlappingDistance / riderTotalJourneyMeters
     : 0;
@@ -452,4 +481,35 @@ export function calculateMatchScore({
     same_college: sameCollege,
     reason: sameCollege ? 'Compatible route found (Same College!)' : 'Compatible route found via API'
   };
+}
+
+/**
+ * Same as calculateMatchScore, but measures pickup/destination distance as
+ * real driving distance instead of straight-line distance to the route.
+ *
+ * The host never detours to get the rider - the rider makes their own way to
+ * wherever the host's route already passes (the "meeting point"). A meeting
+ * point that's 400m away as the crow flies can be a 2km drive if it's across
+ * a highway or down a one-way system, so the straight-line figure understates
+ * what the rider actually has to travel. This fetches the real road distance
+ * from OSRM for the rider's shortest path to (and from) that meeting point,
+ * then feeds it into the same compatibility gate and scoring logic via the
+ * override params - nothing about the overlap/gating rules themselves changes.
+ */
+export async function calculateMatchScoreWithRoadDistance(
+  params: Parameters<typeof calculateMatchScore>[0]
+): Promise<MatchScoreResult> {
+  const { hostFrom, hostTo, riderPickup, riderDestination, hostRouteGeometry } = params;
+  const projection = projectRiderOntoHostRoute(hostFrom, hostTo, riderPickup, riderDestination, hostRouteGeometry);
+
+  const [pickupRoad, destinationRoad] = await Promise.all([
+    getRouteWithFallback(riderPickup, projection.pickup.point),
+    getRouteWithFallback(projection.destination.point, riderDestination),
+  ]);
+
+  return calculateMatchScore({
+    ...params,
+    pickupDistanceOverride: pickupRoad.distance,
+    destinationDistanceOverride: destinationRoad.distance,
+  });
 }

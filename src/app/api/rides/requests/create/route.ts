@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { calculateMatchScore } from "@/lib/matching";
+import { calculateMatchScoreWithRoadDistance } from "@/lib/matching";
 import { getRouteGeometry } from "@/lib/osrm";
 
 const supabase = createClient(
@@ -227,7 +227,7 @@ export async function POST(request: NextRequest) {
         const riderJourneyDistance = routeDistanceMeters || match.rider_total_journey_meters;
         console.log(`[Request API] Rider journey: ${riderJourneyDistance.toFixed(0)}m (OSRM: ${!!routeDistanceMeters})`);
 
-        const score = calculateMatchScore({
+        const score = await calculateMatchScoreWithRoadDistance({
           hostFrom: { lat: hostTemplate.from_lat, lng: hostTemplate.from_lng },
           hostTo: { lat: hostTemplate.to_lat, lng: hostTemplate.to_lng },
           riderPickup: { lat: profile.from_lat, lng: profile.from_lng },
@@ -237,8 +237,6 @@ export async function POST(request: NextRequest) {
           riderGenderPreference: genderPreference,
           maxDetourMeters: hostTemplate.max_detour_meters ?? 2000,
           maxDestinationMeters: 1000,
-          pickupDistanceOverride: match.pickup_distance_meters,
-          destinationDistanceOverride: match.destination_distance_meters,
           hostRouteGeometry: hostTemplate.route_geometry
         });
 
