@@ -272,33 +272,104 @@ function overlapFromProjection(
 }
 
 /**
- * Find where the rider's actual road route shares actual road with the
- * host's actual road route, by comparing the two polylines segment by
- * segment - NOT by projecting rider points onto the host route as a whole
- * (that's what projectOntoPolyline/overlapFromProjection do, and why they
- * can pick a host-route point that's geometrically close but physically
- * unreachable - across a median, behind a gated complex, down a one-way
- * loop, etc).
+ * Compass bearing (0-360 degrees, 0 = north) of travel from p1 to p2.
+ */
+function getBearing(p1: GeoPoint, p2: GeoPoint): number {
+  const lat1 = p1.lat * Math.PI / 180;
+  const lat2 = p2.lat * Math.PI / 180;
+  const deltaLng = (p2.lng - p1.lng) * Math.PI / 180;
+
+  const y = Math.sin(deltaLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
+  const bearing = Math.atan2(y, x) * 180 / Math.PI;
+  return (bearing + 360) % 360;
+}
+
+/**
+ * Smallest angle (0-180 degrees) between two compass bearings.
+ */
+function bearingDifference(b1: number, b2: number): number {
+  const diff = Math.abs(b1 - b2) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+
+/**
+ * Minimum distance (meters) between two line segments: each segment's own
+ * endpoints projected onto the other segment, smallest of the four. This is
+ * point-to-SEGMENT projection against one single, bounded segment (reusing
+ * projectOntoSegment) - not point-to-POLYLINE projection, which searches an
+ * entire route for its single globally closest point and is what this
+ * rewrite deliberately avoids for overlap detection.
+ */
+function segmentToSegmentDistance(aStart: GeoPoint, aEnd: GeoPoint, bStart: GeoPoint, bEnd: GeoPoint): number {
+  return Math.min(
+    projectOntoSegment(bStart, bEnd, aStart).distanceMeters,
+    projectOntoSegment(bStart, bEnd, aEnd).distanceMeters,
+    projectOntoSegment(aStart, aEnd, bStart).distanceMeters,
+    projectOntoSegment(aStart, aEnd, bEnd).distanceMeters,
+  );
+}
+
+interface RouteSegment {
+  index: number;
+  start: GeoPoint;
+  end: GeoPoint;
+  bearing: number;
+  length: number;
+}
+
+function buildRouteSegments(coords: [number, number][]): RouteSegment[] {
+  const segments: RouteSegment[] = [];
+  for (let i = 0; i < coords.length - 1; i++) {
+    const start: GeoPoint = { lng: coords[i][0], lat: coords[i][1] };
+    const end: GeoPoint = { lng: coords[i + 1][0], lat: coords[i + 1][1] };
+    segments.push({ index: i, start, end, bearing: getBearing(start, end), length: getHaversineDistance(start, end) });
+  }
+  return segments;
+}
+
+function sumSegmentLength(segments: RouteSegment[], startIdx: number, endIdx: number): number {
+  let total = 0;
+  for (let i = startIdx; i <= endIdx; i++) {
+    if (i < 0 || i >= segments.length) continue;
+    total += segments[i].length;
+  }
+  return total;
+}
+
+/**
+ * Find the longest continuous stretch of actual shared road between the
+ * rider's real route and the host's real route - true polyline-to-polyline
+ * common path detection, not point projection.
  *
- * For every segment of the rider's route (in order, from pickup to
- * destination), this checks every segment of the host's route and asks "is
- * there a host segment close enough to this one that they're plausibly the
- * same stretch of road?" (segment midpoint-to-midpoint distance <=
- * toleranceMeters). The first rider segment with a match is the meeting
- * point; the last one is the exit point. The overlap distance is the sum of
- * the lengths of every rider segment that matched - the actual length of
- * shared road, not just the span between two projected points.
+ * Two segments are considered "the same road" only if BOTH:
+ *  - they pass close to each other (segmentToSegmentDistance <= toleranceMeters), and
+ *  - they run in roughly the same direction (bearingDifference <= maxBearingDiffDegrees).
+ * The direction check is what a pure distance/midpoint check can't do: two
+ * roads that cross at an intersection can sit right on top of each other
+ * for one segment's length while actually running perpendicular - without
+ * checking bearing, that crossing point would falsely count as "shared
+ * road." A rider and host genuinely driving the same road are travelling
+ * the same direction, not just passing near each other.
+ *
+ * Every rider segment is checked against every host segment (matches array
+ * below). Matched rider segments are then walked in route order to find the
+ * single LONGEST CONTIGUOUS run - a shared stretch can't have gaps in the
+ * middle where the routes weren't actually together. The first segment of
+ * that run is the meeting point, the last is the exit point, and
+ * overlapMeters is the total length of just that run (not the sum of every
+ * scattered match across the whole route).
  *
  * Deliberately O(riderSegments * hostSegments) with a console log for every
- * segment comparison - this is a correctness-first rewrite, not tuned for
- * performance. Returns null if no rider segment ever matches a host
- * segment - genuinely no shared road, however close the endpoints alone
- * might look.
+ * segment comparison and every run boundary - this is a correctness-first
+ * implementation, not tuned for performance. Returns null if no contiguous
+ * run of matching segments exists anywhere - genuinely no shared road.
  */
 function findRouteOverlap(
   hostRouteCoords: [number, number][],
   riderRouteCoords: [number, number][],
-  toleranceMeters: number
+  toleranceMeters: number,
+  maxBearingDiffDegrees: number = 30
 ): {
   overlapMeters: number;
   entryPoint: GeoPoint;
@@ -306,101 +377,114 @@ function findRouteOverlap(
   pickupToEntryMeters: number;
   exitToDestinationMeters: number;
 } | null {
-  const hostSegments: { index: number; start: GeoPoint; end: GeoPoint; midpoint: GeoPoint }[] = [];
-  for (let j = 0; j < hostRouteCoords.length - 1; j++) {
-    const start: GeoPoint = { lng: hostRouteCoords[j][0], lat: hostRouteCoords[j][1] };
-    const end: GeoPoint = { lng: hostRouteCoords[j + 1][0], lat: hostRouteCoords[j + 1][1] };
-    hostSegments.push({
-      index: j,
-      start,
-      end,
-      midpoint: { lat: (start.lat + end.lat) / 2, lng: (start.lng + end.lng) / 2 },
-    });
-  }
+  const hostSegments = buildRouteSegments(hostRouteCoords);
+  const riderSegments = buildRouteSegments(riderRouteCoords);
 
   console.log(
-    `[findRouteOverlap] Comparing rider route (${riderRouteCoords.length - 1} segments) against ` +
-    `host route (${hostSegments.length} segments), tolerance=${toleranceMeters}m`
+    `[findRouteOverlap] Comparing rider route (${riderSegments.length} segments) against ` +
+    `host route (${hostSegments.length} segments) - distance tolerance=${toleranceMeters}m, ` +
+    `bearing tolerance=${maxBearingDiffDegrees}deg`
   );
 
-  let riderCumulative = 0; // distance from rider's pickup to the START of the current segment
-  let cumulativeAtExit = 0; // distance from rider's pickup to the END of the last matched segment
-  let matchedLength = 0;
-  let entryPoint: GeoPoint | null = null;
-  let exitPoint: GeoPoint | null = null;
-  let pickupToEntryMeters = 0;
+  // Step 1: for every rider segment, find the closest host segment that
+  // also runs in roughly the same direction (both checks required).
+  const matchedHostIndex: (number | null)[] = riderSegments.map((riderSeg) => {
+    let bestHostIndex: number | null = null;
+    let bestDistance = Infinity;
+    let bestBearingDiff = 0;
 
-  for (let i = 0; i < riderRouteCoords.length - 1; i++) {
-    const riderStart: GeoPoint = { lng: riderRouteCoords[i][0], lat: riderRouteCoords[i][1] };
-    const riderEnd: GeoPoint = { lng: riderRouteCoords[i + 1][0], lat: riderRouteCoords[i + 1][1] };
-    const riderMidpoint: GeoPoint = { lat: (riderStart.lat + riderEnd.lat) / 2, lng: (riderStart.lng + riderEnd.lng) / 2 };
-    const segmentLength = getHaversineDistance(riderStart, riderEnd);
+    for (const hostSeg of hostSegments) {
+      const distance = segmentToSegmentDistance(riderSeg.start, riderSeg.end, hostSeg.start, hostSeg.end);
+      const bearingDiff = bearingDifference(riderSeg.bearing, hostSeg.bearing);
 
-    // Compare this rider segment against every host segment; keep the
-    // closest one. Segment-to-segment closeness is approximated by
-    // midpoint-to-midpoint distance - simple, symmetric, and accurate
-    // enough at the vertex density OSRM routes come at.
-    let closestHostIndex = -1;
-    let closestDistance = Infinity;
-    for (const hostSegment of hostSegments) {
-      const d = getHaversineDistance(riderMidpoint, hostSegment.midpoint);
-      if (d < closestDistance) {
-        closestDistance = d;
-        closestHostIndex = hostSegment.index;
+      if (distance <= toleranceMeters && bearingDiff <= maxBearingDiffDegrees && distance < bestDistance) {
+        bestDistance = distance;
+        bestBearingDiff = bearingDiff;
+        bestHostIndex = hostSeg.index;
       }
     }
 
-    const isMatch = closestDistance <= toleranceMeters;
-
-    if (isMatch) {
+    if (bestHostIndex !== null) {
       console.log(
-        `[findRouteOverlap] rider segment ${i} MATCHED host segment ${closestHostIndex} ` +
-        `(midpoint distance ${closestDistance.toFixed(1)}m <= ${toleranceMeters}m tolerance) - counts as shared road`
+        `[findRouteOverlap] rider segment ${riderSeg.index} MATCHED host segment ${bestHostIndex} ` +
+        `(distance=${bestDistance.toFixed(1)}m <= ${toleranceMeters}m, bearingDiff=${bestBearingDiff.toFixed(1)}deg <= ${maxBearingDiffDegrees}deg)`
       );
-
-      if (!entryPoint) {
-        entryPoint = riderStart;
-        pickupToEntryMeters = riderCumulative;
-        console.log(
-          `[findRouteOverlap] MEETING POINT: rider segment ${i} start ` +
-          `(${riderStart.lat.toFixed(6)}, ${riderStart.lng.toFixed(6)}), ` +
-          `${pickupToEntryMeters.toFixed(1)}m from rider's pickup`
-        );
-      }
-
-      exitPoint = riderEnd;
-      cumulativeAtExit = riderCumulative + segmentLength;
-      matchedLength += segmentLength;
     } else {
       console.log(
-        `[findRouteOverlap] rider segment ${i} did NOT match - nearest host segment is ${closestHostIndex} ` +
-        `at ${closestDistance.toFixed(1)}m, which is beyond the ${toleranceMeters}m tolerance - not the same road`
+        `[findRouteOverlap] rider segment ${riderSeg.index} did NOT match any host segment ` +
+        `within ${toleranceMeters}m distance AND ${maxBearingDiffDegrees}deg bearing - not the same road`
       );
     }
 
-    riderCumulative += segmentLength;
-  }
+    return bestHostIndex;
+  });
 
-  const riderTotalLength = riderCumulative;
+  // Step 2: walk the matches in rider-route order and find the longest
+  // contiguous run (a gap - one unmatched rider segment - ends the run).
+  let bestRun: { startIdx: number; endIdx: number; hostIndices: number[] } | null = null;
+  let currentRun: { startIdx: number; endIdx: number; hostIndices: number[] } | null = null;
 
-  if (!entryPoint || !exitPoint) {
+  const closeRun = () => {
+    if (!currentRun) return;
+    const runLength = sumSegmentLength(riderSegments, currentRun.startIdx, currentRun.endIdx);
     console.log(
-      `[findRouteOverlap] No shared road found - none of the rider's ${riderRouteCoords.length - 1} segments ` +
-      `ever came within ${toleranceMeters}m of the host's route`
+      `[findRouteOverlap] run closed: rider segments ${currentRun.startIdx}-${currentRun.endIdx} ` +
+      `(host segments ${Math.min(...currentRun.hostIndices)}-${Math.max(...currentRun.hostIndices)}), length=${runLength.toFixed(1)}m`
+    );
+    const bestLength = bestRun ? sumSegmentLength(riderSegments, bestRun.startIdx, bestRun.endIdx) : -1;
+    if (runLength > bestLength) {
+      bestRun = currentRun;
+    }
+    currentRun = null;
+  };
+
+  for (let i = 0; i < riderSegments.length; i++) {
+    const hostIdx = matchedHostIndex[i];
+    if (hostIdx !== null) {
+      if (!currentRun) {
+        currentRun = { startIdx: i, endIdx: i, hostIndices: [hostIdx] };
+      } else {
+        currentRun.endIdx = i;
+        currentRun.hostIndices.push(hostIdx);
+      }
+    } else {
+      closeRun();
+    }
+  }
+  closeRun();
+
+  if (!bestRun) {
+    console.log(
+      `[findRouteOverlap] No shared road found - no contiguous run of matching segments between ` +
+      `the rider's ${riderSegments.length}-segment route and the host's ${hostSegments.length}-segment route`
     );
     return null;
   }
 
-  const exitToDestinationMeters = Math.max(0, riderTotalLength - cumulativeAtExit);
+  const run: { startIdx: number; endIdx: number; hostIndices: number[] } = bestRun;
+  const overlapMeters = sumSegmentLength(riderSegments, run.startIdx, run.endIdx);
+  const entryPoint = riderSegments[run.startIdx].start;
+  const exitPoint = riderSegments[run.endIdx].end;
+  const pickupToEntryMeters = sumSegmentLength(riderSegments, 0, run.startIdx - 1);
+  const riderTotalLength = sumSegmentLength(riderSegments, 0, riderSegments.length - 1);
+  const exitToDestinationMeters = Math.max(0, riderTotalLength - sumSegmentLength(riderSegments, 0, run.endIdx));
 
   console.log(
-    `[findRouteOverlap] EXIT POINT: (${exitPoint.lat.toFixed(6)}, ${exitPoint.lng.toFixed(6)}), ` +
-    `${exitToDestinationMeters.toFixed(1)}m from rider's destination`
+    `[findRouteOverlap] LONGEST CONTINUOUS MATCH: rider segments ${run.startIdx}-${run.endIdx}, ` +
+    `host segments ${Math.min(...run.hostIndices)}-${Math.max(...run.hostIndices)}`
   );
-  console.log(`[findRouteOverlap] OVERLAP (total shared road length): ${matchedLength.toFixed(1)}m`);
+  console.log(
+    `[findRouteOverlap] MEETING POINT: rider segment ${run.startIdx} start ` +
+    `(${entryPoint.lat.toFixed(6)}, ${entryPoint.lng.toFixed(6)}), ${pickupToEntryMeters.toFixed(1)}m from rider's pickup`
+  );
+  console.log(
+    `[findRouteOverlap] EXIT POINT: rider segment ${run.endIdx} end ` +
+    `(${exitPoint.lat.toFixed(6)}, ${exitPoint.lng.toFixed(6)}), ${exitToDestinationMeters.toFixed(1)}m from rider's destination`
+  );
+  console.log(`[findRouteOverlap] OVERLAP (longest continuous shared road): ${overlapMeters.toFixed(1)}m`);
 
   return {
-    overlapMeters: matchedLength,
+    overlapMeters,
     entryPoint,
     exitPoint,
     pickupToEntryMeters,
