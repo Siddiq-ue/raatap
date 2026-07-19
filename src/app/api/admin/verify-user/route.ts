@@ -270,6 +270,13 @@ export async function POST(req: NextRequest) {
                       continue;
                     }
 
+                    // Fetch rider's own real route geometry for road-connectivity-aware overlap
+                    const { data: riderRequestGeometry } = await supabase
+                      .from("ride_requests")
+                      .select("route_geometry")
+                      .eq("id", match.request_id)
+                      .single();
+
                     const score = await calculateMatchScoreWithRoadDistance({
                       hostFrom: { lat: profile.from_lat, lng: profile.from_lng },
                       hostTo: { lat: profile.to_lat, lng: profile.to_lng },
@@ -282,7 +289,8 @@ export async function POST(req: NextRequest) {
                       riderCollege: riderProfile?.institution,
                       maxDetourMeters: 2000,
                       maxDestinationMeters: 1000,
-                      hostRouteGeometry: geometry
+                      hostRouteGeometry: geometry,
+                      riderRouteGeometry: riderRequestGeometry?.route_geometry
                     });
 
                     if (score.compatible) {
@@ -461,7 +469,8 @@ export async function POST(req: NextRequest) {
                   riderCollege: profile.institution,
                   maxDetourMeters: hostTemplate.max_detour_meters ?? 2000,
                   maxDestinationMeters: 1000,
-                  hostRouteGeometry: hostTemplate.route_geometry
+                  hostRouteGeometry: hostTemplate.route_geometry,
+                  riderRouteGeometry
                 });
 
                 if (score.compatible) {

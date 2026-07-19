@@ -272,6 +272,143 @@ function overlapFromProjection(
 }
 
 /**
+ * Find where the rider's actual road route shares actual road with the
+ * host's actual road route, by comparing the two polylines segment by
+ * segment - NOT by projecting rider points onto the host route as a whole
+ * (that's what projectOntoPolyline/overlapFromProjection do, and why they
+ * can pick a host-route point that's geometrically close but physically
+ * unreachable - across a median, behind a gated complex, down a one-way
+ * loop, etc).
+ *
+ * For every segment of the rider's route (in order, from pickup to
+ * destination), this checks every segment of the host's route and asks "is
+ * there a host segment close enough to this one that they're plausibly the
+ * same stretch of road?" (segment midpoint-to-midpoint distance <=
+ * toleranceMeters). The first rider segment with a match is the meeting
+ * point; the last one is the exit point. The overlap distance is the sum of
+ * the lengths of every rider segment that matched - the actual length of
+ * shared road, not just the span between two projected points.
+ *
+ * Deliberately O(riderSegments * hostSegments) with a console log for every
+ * segment comparison - this is a correctness-first rewrite, not tuned for
+ * performance. Returns null if no rider segment ever matches a host
+ * segment - genuinely no shared road, however close the endpoints alone
+ * might look.
+ */
+function findRouteOverlap(
+  hostRouteCoords: [number, number][],
+  riderRouteCoords: [number, number][],
+  toleranceMeters: number
+): {
+  overlapMeters: number;
+  entryPoint: GeoPoint;
+  exitPoint: GeoPoint;
+  pickupToEntryMeters: number;
+  exitToDestinationMeters: number;
+} | null {
+  const hostSegments: { index: number; start: GeoPoint; end: GeoPoint; midpoint: GeoPoint }[] = [];
+  for (let j = 0; j < hostRouteCoords.length - 1; j++) {
+    const start: GeoPoint = { lng: hostRouteCoords[j][0], lat: hostRouteCoords[j][1] };
+    const end: GeoPoint = { lng: hostRouteCoords[j + 1][0], lat: hostRouteCoords[j + 1][1] };
+    hostSegments.push({
+      index: j,
+      start,
+      end,
+      midpoint: { lat: (start.lat + end.lat) / 2, lng: (start.lng + end.lng) / 2 },
+    });
+  }
+
+  console.log(
+    `[findRouteOverlap] Comparing rider route (${riderRouteCoords.length - 1} segments) against ` +
+    `host route (${hostSegments.length} segments), tolerance=${toleranceMeters}m`
+  );
+
+  let riderCumulative = 0; // distance from rider's pickup to the START of the current segment
+  let cumulativeAtExit = 0; // distance from rider's pickup to the END of the last matched segment
+  let matchedLength = 0;
+  let entryPoint: GeoPoint | null = null;
+  let exitPoint: GeoPoint | null = null;
+  let pickupToEntryMeters = 0;
+
+  for (let i = 0; i < riderRouteCoords.length - 1; i++) {
+    const riderStart: GeoPoint = { lng: riderRouteCoords[i][0], lat: riderRouteCoords[i][1] };
+    const riderEnd: GeoPoint = { lng: riderRouteCoords[i + 1][0], lat: riderRouteCoords[i + 1][1] };
+    const riderMidpoint: GeoPoint = { lat: (riderStart.lat + riderEnd.lat) / 2, lng: (riderStart.lng + riderEnd.lng) / 2 };
+    const segmentLength = getHaversineDistance(riderStart, riderEnd);
+
+    // Compare this rider segment against every host segment; keep the
+    // closest one. Segment-to-segment closeness is approximated by
+    // midpoint-to-midpoint distance - simple, symmetric, and accurate
+    // enough at the vertex density OSRM routes come at.
+    let closestHostIndex = -1;
+    let closestDistance = Infinity;
+    for (const hostSegment of hostSegments) {
+      const d = getHaversineDistance(riderMidpoint, hostSegment.midpoint);
+      if (d < closestDistance) {
+        closestDistance = d;
+        closestHostIndex = hostSegment.index;
+      }
+    }
+
+    const isMatch = closestDistance <= toleranceMeters;
+
+    if (isMatch) {
+      console.log(
+        `[findRouteOverlap] rider segment ${i} MATCHED host segment ${closestHostIndex} ` +
+        `(midpoint distance ${closestDistance.toFixed(1)}m <= ${toleranceMeters}m tolerance) - counts as shared road`
+      );
+
+      if (!entryPoint) {
+        entryPoint = riderStart;
+        pickupToEntryMeters = riderCumulative;
+        console.log(
+          `[findRouteOverlap] MEETING POINT: rider segment ${i} start ` +
+          `(${riderStart.lat.toFixed(6)}, ${riderStart.lng.toFixed(6)}), ` +
+          `${pickupToEntryMeters.toFixed(1)}m from rider's pickup`
+        );
+      }
+
+      exitPoint = riderEnd;
+      cumulativeAtExit = riderCumulative + segmentLength;
+      matchedLength += segmentLength;
+    } else {
+      console.log(
+        `[findRouteOverlap] rider segment ${i} did NOT match - nearest host segment is ${closestHostIndex} ` +
+        `at ${closestDistance.toFixed(1)}m, which is beyond the ${toleranceMeters}m tolerance - not the same road`
+      );
+    }
+
+    riderCumulative += segmentLength;
+  }
+
+  const riderTotalLength = riderCumulative;
+
+  if (!entryPoint || !exitPoint) {
+    console.log(
+      `[findRouteOverlap] No shared road found - none of the rider's ${riderRouteCoords.length - 1} segments ` +
+      `ever came within ${toleranceMeters}m of the host's route`
+    );
+    return null;
+  }
+
+  const exitToDestinationMeters = Math.max(0, riderTotalLength - cumulativeAtExit);
+
+  console.log(
+    `[findRouteOverlap] EXIT POINT: (${exitPoint.lat.toFixed(6)}, ${exitPoint.lng.toFixed(6)}), ` +
+    `${exitToDestinationMeters.toFixed(1)}m from rider's destination`
+  );
+  console.log(`[findRouteOverlap] OVERLAP (total shared road length): ${matchedLength.toFixed(1)}m`);
+
+  return {
+    overlapMeters: matchedLength,
+    entryPoint,
+    exitPoint,
+    pickupToEntryMeters,
+    exitToDestinationMeters,
+  };
+}
+
+/**
  * Check if a host-rider pair has a red flag that blocks matching
  */
 export async function checkRedFlag(
@@ -317,8 +454,10 @@ export function calculateMatchScore({
   maxDetourMeters = 2000,
   maxDestinationMeters = 1000,
   hostRouteGeometry,
+  riderRouteGeometry,
   pickupDistanceOverride,
   destinationDistanceOverride,
+  routeOverlapToleranceMeters = 50,
 }: {
   hostFrom: GeoPoint;
   hostTo: GeoPoint;
@@ -332,20 +471,39 @@ export function calculateMatchScore({
   maxDetourMeters?: number;
   maxDestinationMeters?: number;
   hostRouteGeometry?: any;
+  riderRouteGeometry?: any;
   pickupDistanceOverride?: number;
   destinationDistanceOverride?: number;
+  routeOverlapToleranceMeters?: number;
 }): MatchScoreResult {
   // The host drives their route exactly as planned and never detours - the
-  // rider gets themself to wherever the route already passes closest. So
-  // "pickup distance" / "destination distance" mean distance-to-the-route,
-  // not distance-to-the-host's-fixed-start/end-address. pickupDistanceOverride
-  // /destinationDistanceOverride (from the SQL candidate search, which already
-  // measures point-to-route distance) take precedence when supplied; otherwise
-  // this same projection also drives the overlap calculation below, so the
-  // two can never disagree about where the route is.
+  // rider gets themself to wherever the route already passes closest.
+  const hostRouteCoords = extractLineCoords(hostRouteGeometry) ??
+    ([[hostFrom.lng, hostFrom.lat], [hostTo.lng, hostTo.lat]] as [number, number][]);
+  const riderRouteCoords = extractLineCoords(riderRouteGeometry);
+
+  // When the rider's own real route is available, walk it against the
+  // host's route (findRouteOverlap) instead of projecting just the two
+  // endpoints - this is what catches a rider whose straight-line-nearest
+  // point on the host's route is geometrically close but physically
+  // unreachable. routeOverlap's pickup/destination figures are the rider's
+  // real driving distance along their own route to/from where it meets the
+  // host's, so they're used ahead of any override; overlappingDistance is
+  // computed from the same walk further down. If routeOverlap comes back
+  // null (rider route was given but never actually gets close to the
+  // host's), overlap is genuinely zero regardless of how close the
+  // endpoints look in isolation.
+  const routeOverlap = riderRouteCoords
+    ? findRouteOverlap(hostRouteCoords, riderRouteCoords, routeOverlapToleranceMeters)
+    : null;
+
   const projection = projectRiderOntoHostRoute(hostFrom, hostTo, riderPickup, riderDestination, hostRouteGeometry);
-  const pickupDistance = pickupDistanceOverride ?? projection.pickup.distanceToRoute;
-  const destinationDistance = destinationDistanceOverride ?? projection.destination.distanceToRoute;
+  const pickupDistance = routeOverlap
+    ? (pickupDistanceOverride ?? routeOverlap.pickupToEntryMeters)
+    : (pickupDistanceOverride ?? projection.pickup.distanceToRoute);
+  const destinationDistance = routeOverlap
+    ? (destinationDistanceOverride ?? routeOverlap.exitToDestinationMeters)
+    : (destinationDistanceOverride ?? projection.destination.distanceToRoute);
   const hostRouteDistance = projection.hostRouteLength;
   // 1. Gender Compatibility Check
   const genderCompatible = 
@@ -372,7 +530,23 @@ export function calculateMatchScore({
   }
 
   // 2. Pickup Distance Check
-  if (pickupDistance > maxDetourMeters) {
+  // Route-matched pairs (routeOverlap present): pickupDistance is the
+  // rider's own real driving distance along their own route to reach the
+  // shared road - not a detour, just the start of their normal journey. A
+  // fixed maxDetourMeters cutoff on that figure wrongly rejects a rider
+  // whose road happens to run a while before merging with the host's, even
+  // when the shared stretch afterward is substantial. So for route-matched
+  // pairs, judge it by payoff instead: reject only when the lead-in outweighs
+  // the shared road it leads to (rider travels a long way for very little
+  // actual overlap), not against an absolute distance. Pairs without real
+  // rider route geometry (no routeOverlap) fall back to the original
+  // absolute maxDetourMeters gate, since there's no overlap figure yet to
+  // weigh it against.
+  const pickupWorthIt = routeOverlap
+    ? routeOverlap.pickupToEntryMeters <= routeOverlap.overlapMeters
+    : pickupDistance <= maxDetourMeters;
+
+  if (!pickupWorthIt) {
     return {
       compatible: false,
       match_score: 0,
@@ -386,12 +560,18 @@ export function calculateMatchScore({
       host_route_distance_meters: Math.round(hostRouteDistance),
       host_route_distance_km: parseFloat((hostRouteDistance / 1000).toFixed(2)),
       same_college: false,
-      reason: `Pickup location too far (>${(pickupDistance/1000).toFixed(2)}km)`
+      reason: routeOverlap
+        ? `Too much travel (${(pickupDistance/1000).toFixed(2)}km) for the shared route length (${(routeOverlap.overlapMeters/1000).toFixed(2)}km)`
+        : `Pickup location too far (>${(pickupDistance/1000).toFixed(2)}km)`
     };
   }
 
-  // 3. Destination Distance Check
-  if (destinationDistance > maxDestinationMeters) {
+  // 3. Destination Distance Check - same reasoning, symmetric on the exit side.
+  const destinationWorthIt = routeOverlap
+    ? routeOverlap.exitToDestinationMeters <= routeOverlap.overlapMeters
+    : destinationDistance <= maxDestinationMeters;
+
+  if (!destinationWorthIt) {
     return {
       compatible: false,
       match_score: 0,
@@ -405,16 +585,26 @@ export function calculateMatchScore({
       host_route_distance_meters: Math.round(hostRouteDistance),
       host_route_distance_km: parseFloat((hostRouteDistance / 1000).toFixed(2)),
       same_college: false,
-      reason: `Destination too far (>${(destinationDistance/1000).toFixed(2)}km)`
+      reason: routeOverlap
+        ? `Too much travel (${(destinationDistance/1000).toFixed(2)}km) for the shared route length (${(routeOverlap.overlapMeters/1000).toFixed(2)}km)`
+        : `Destination too far (>${(destinationDistance/1000).toFixed(2)}km)`
     };
   }
 
   // 4. Calculate Overlapping Distance
-  // Distance along the host's route between the rider's pickup and
-  // destination projections (computed above), capped by the rider's own
-  // journey distance so they're never charged for more than they travel.
+  // When the rider's real route was walked against the host's (routeOverlap),
+  // that's authoritative - it already accounts for road connectivity, not
+  // just as-the-crow-flies distance. riderRouteCoords present but
+  // routeOverlap null means the rider's real path never actually comes
+  // close to the host's route anywhere, so overlap is a hard zero rather
+  // than falling back to the endpoint-projection estimate. Only when no
+  // rider route geometry was supplied at all do we fall back to that
+  // estimate, capped by the rider's own journey distance so they're never
+  // charged for more than they travel.
   const riderSegmentLength = getHaversineDistance(riderPickup, riderDestination);
-  let overlappingDistance = overlapFromProjection(projection, riderSegmentLength, maxDetourMeters, maxDestinationMeters);
+  let overlappingDistance = riderRouteCoords
+    ? (routeOverlap?.overlapMeters ?? 0)
+    : overlapFromProjection(projection, riderSegmentLength, maxDetourMeters, maxDestinationMeters);
 
   if (riderTotalJourneyMeters > 0) {
     overlappingDistance = Math.min(overlappingDistance, riderTotalJourneyMeters);
@@ -454,12 +644,33 @@ export function calculateMatchScore({
 
   // 6. Calculate Match Score (base 100) + College Bonus (10)
   const collegeBonus = sameCollege ? 10 : 0;
-  
-  let matchScore = (
-    (1.0 - (pickupDistance / 2000.0)) * 0.50 +
-    (1.0 - (destinationDistance / 1000.0)) * 0.30 +
-    overlapRatio * 0.20
-  ) * 100;
+
+  let matchScore: number;
+  if (routeOverlap) {
+    // Route-matched: fixed-distance normalizers (pickupDistance/2000,
+    // destinationDistance/1000) don't mean anything once a multi-km lead-in
+    // can be perfectly legitimate, as the gate above already established -
+    // they'd tank the score to 0 for exactly the pairs the new gate just
+    // accepted as good matches. Score by overlap quality instead:
+    // overlapRatio (how much of the rider's whole trip is spent on the
+    // shared road - the main signal, weighted heaviest) plus how efficient
+    // the lead-in/tail-out travel is relative to the shared road itself
+    // (the same ratio the gate checks, expressed as 0-1 "efficiency" -
+    // small lead-in per km of shared road scores higher).
+    const pickupEfficiency = 1 - Math.min(1, pickupDistance / overlappingDistance);
+    const destinationEfficiency = 1 - Math.min(1, destinationDistance / overlappingDistance);
+    matchScore = (
+      overlapRatio * 0.60 +
+      pickupEfficiency * 0.20 +
+      destinationEfficiency * 0.20
+    ) * 100;
+  } else {
+    matchScore = (
+      (1.0 - (pickupDistance / 2000.0)) * 0.50 +
+      (1.0 - (destinationDistance / 1000.0)) * 0.30 +
+      overlapRatio * 0.20
+    ) * 100;
+  }
 
   // Add college bonus
   matchScore = matchScore + collegeBonus;
@@ -491,15 +702,27 @@ export function calculateMatchScore({
  * wherever the host's route already passes (the "meeting point"). A meeting
  * point that's 400m away as the crow flies can be a 2km drive if it's across
  * a highway or down a one-way system, so the straight-line figure understates
- * what the rider actually has to travel. This fetches the real road distance
- * from OSRM for the rider's shortest path to (and from) that meeting point,
- * then feeds it into the same compatibility gate and scoring logic via the
- * override params - nothing about the overlap/gating rules themselves changes.
+ * what the rider actually has to travel.
+ *
+ * If `params.riderRouteGeometry` (the rider's own real OSRM route) is
+ * supplied, calculateMatchScore already derives real road-distance
+ * pickup/destination figures directly from it via findRouteOverlap - the
+ * distance along the rider's own path to/from wherever it actually meets
+ * the host's route - so no OSRM call is needed here at all, and this is
+ * strictly more accurate than pinging OSRM for the distance to a single
+ * straight-line-guessed meeting point. That guess-and-check via OSRM is
+ * kept only as a fallback for callers that don't have the rider's route
+ * geometry on hand.
  */
 export async function calculateMatchScoreWithRoadDistance(
   params: Parameters<typeof calculateMatchScore>[0]
 ): Promise<MatchScoreResult> {
-  const { hostFrom, hostTo, riderPickup, riderDestination, hostRouteGeometry } = params;
+  const { hostFrom, hostTo, riderPickup, riderDestination, hostRouteGeometry, riderRouteGeometry } = params;
+
+  if (extractLineCoords(riderRouteGeometry)) {
+    return calculateMatchScore(params);
+  }
+
   const projection = projectRiderOntoHostRoute(hostFrom, hostTo, riderPickup, riderDestination, hostRouteGeometry);
 
   const [pickupRoad, destinationRoad] = await Promise.all([

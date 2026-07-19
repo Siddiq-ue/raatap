@@ -220,7 +220,8 @@ export async function POST(request: NextRequest) {
           riderGenderPreference: genderPreference,
           maxDetourMeters: hostTemplate.max_detour_meters ?? 2000,
           maxDestinationMeters: 1000,
-          hostRouteGeometry: hostTemplate.route_geometry
+          hostRouteGeometry: hostTemplate.route_geometry,
+          riderRouteGeometry
         });
 
         console.log(`[Request API] Match score details:`, {

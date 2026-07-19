@@ -74,7 +74,7 @@ async function main() {
 
     const { data: request } = await supabase
       .from("ride_requests")
-      .select("pickup_lat, pickup_lng, destination_lat, destination_lng, route_distance_meters, gender_preference, rider_id")
+      .select("pickup_lat, pickup_lng, destination_lat, destination_lng, route_distance_meters, gender_preference, rider_id, route_geometry")
       .eq("id", suggestion.ride_request_id)
       .single();
 
@@ -109,6 +109,7 @@ async function main() {
       maxDetourMeters: template.max_detour_meters ?? 2000,
       maxDestinationMeters: 1000,
       hostRouteGeometry: template.route_geometry,
+      riderRouteGeometry: request.route_geometry,
     });
 
     const isRecordOnly = RECORD_ONLY_STATUSES.includes(suggestion.status);
