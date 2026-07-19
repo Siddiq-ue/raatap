@@ -40,12 +40,41 @@ interface MatchSuggestion {
   rider: SuggestionRider | null;
 }
 
+interface UnmatchedRider {
+  id: string;
+  name: string;
+  phone: string;
+  institution: string;
+  pickup_location: string;
+  destination_location: string;
+  route_distance_meters: number | null;
+  created_at: string;
+}
+
+interface UnmatchedHost {
+  id: string;
+  name: string;
+  phone: string;
+  institution: string;
+  from_location: string;
+  to_location: string;
+  departure_time: string;
+  available_seats: number;
+  created_at: string;
+}
+
 export default function AdminMatchSuggestionsPage() {
+  const [tab, setTab] = useState<"suggestions" | "unmatched">("suggestions");
+
   const [suggestions, setSuggestions] = useState<MatchSuggestion[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
+
+  const [unmatchedRiders, setUnmatchedRiders] = useState<UnmatchedRider[]>([]);
+  const [unmatchedHosts, setUnmatchedHosts] = useState<UnmatchedHost[]>([]);
+  const [unmatchedLoading, setUnmatchedLoading] = useState(true);
 
   const fetchSuggestions = useCallback(async () => {
     setLoading(true);
@@ -56,6 +85,7 @@ export default function AdminMatchSuggestionsPage() {
 
       const res = await fetch(`/api/admin/match-suggestions?${params}`);
       const data = await res.json();
+      console.log(data)
       setSuggestions(data.suggestions || []);
       setTotal(data.total || 0);
     } catch (err) {
@@ -65,9 +95,27 @@ export default function AdminMatchSuggestionsPage() {
     }
   }, [statusFilter, search]);
 
+  const fetchUnmatched = useCallback(async () => {
+    setUnmatchedLoading(true);
+    try {
+      const res = await fetch("/api/admin/unmatched");
+      const data = await res.json();
+      setUnmatchedRiders(data.unmatchedRiders || []);
+      setUnmatchedHosts(data.unmatchedHosts || []);
+    } catch (err) {
+      console.error("Failed to fetch unmatched riders/hosts:", err);
+    } finally {
+      setUnmatchedLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchSuggestions();
   }, [fetchSuggestions]);
+
+  useEffect(() => {
+    fetchUnmatched();
+  }, [fetchUnmatched]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -94,6 +142,76 @@ export default function AdminMatchSuggestionsPage() {
           <p className="text-gray-500 mt-1">Review and monitor ride match suggestions ({total} total)</p>
         </div>
 
+        {/* Tabs */}
+        <div className="flex gap-2 mb-6">
+          <button
+            onClick={() => setTab("suggestions")}
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+              tab === "suggestions" ? "bg-[#6675FF] text-white" : "bg-white text-gray-600 border border-gray-200"
+            }`}
+          >
+            Suggestions
+          </button>
+          <button
+            onClick={() => setTab("unmatched")}
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+              tab === "unmatched" ? "bg-[#6675FF] text-white" : "bg-white text-gray-600 border border-gray-200"
+            }`}
+          >
+            Still Looking ({unmatchedRiders.length + unmatchedHosts.length})
+          </button>
+        </div>
+
+        {tab === "unmatched" ? (
+          unmatchedLoading ? (
+            <div className="space-y-4">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="bg-white rounded-2xl border border-gray-100 p-6 animate-pulse">
+                  <div className="h-5 bg-gray-200 rounded w-1/3 mb-3" />
+                  <div className="h-4 bg-gray-200 rounded w-1/2" />
+                </div>
+              ))}
+            </div>
+          ) : unmatchedRiders.length === 0 && unmatchedHosts.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
+              <p className="text-gray-500 font-medium">Everyone active has at least one match suggestion</p>
+            </div>
+          ) : (
+            <div className="grid sm:grid-cols-2 gap-6">
+              <div>
+                <h2 className="text-sm font-semibold text-emerald-800 mb-3">Riders still looking ({unmatchedRiders.length})</h2>
+                <div className="space-y-3">
+                  {unmatchedRiders.map((r) => (
+                    <div key={r.id} className="bg-emerald-50/50 rounded-xl p-4 text-sm space-y-1">
+                      <p className="font-medium text-gray-800">{r.name}</p>
+                      <p className="text-gray-500">{r.phone} · {r.institution}</p>
+                      <p className="text-gray-500 text-xs">📍 Pickup: {r.pickup_location}</p>
+                      <p className="text-gray-500 text-xs">🏁 Destination: {r.destination_location}</p>
+                      <p className="text-gray-400 text-xs">Waiting since {new Date(r.created_at).toLocaleDateString()}</p>
+                    </div>
+                  ))}
+                  {unmatchedRiders.length === 0 && <p className="text-gray-400 text-sm italic">None</p>}
+                </div>
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-blue-800 mb-3">Hosts still looking ({unmatchedHosts.length})</h2>
+                <div className="space-y-3">
+                  {unmatchedHosts.map((h) => (
+                    <div key={h.id} className="bg-blue-50/50 rounded-xl p-4 text-sm space-y-1">
+                      <p className="font-medium text-gray-800">{h.name}</p>
+                      <p className="text-gray-500">{h.phone} · {h.institution}</p>
+                      <p className="text-gray-500 text-xs">📍 {h.from_location} → {h.to_location}</p>
+                      <p className="text-gray-500 text-xs">🕐 {h.departure_time} · {h.available_seats} seats</p>
+                      <p className="text-gray-400 text-xs">Waiting since {new Date(h.created_at).toLocaleDateString()}</p>
+                    </div>
+                  ))}
+                  {unmatchedHosts.length === 0 && <p className="text-gray-400 text-sm italic">None</p>}
+                </div>
+              </div>
+            </div>
+          )
+        ) : (
+        <>
         {/* Filters */}
         <div className="bg-white rounded-2xl border border-gray-100 p-4 mb-6">
           <div className="flex flex-col sm:flex-row gap-4">
@@ -234,6 +352,8 @@ export default function AdminMatchSuggestionsPage() {
               </div>
             ))}
           </div>
+        )}
+        </>
         )}
       </div>
     </div>
