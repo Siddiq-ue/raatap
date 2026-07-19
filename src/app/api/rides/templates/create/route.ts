@@ -45,10 +45,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Profile coordinates missing" }, { status: 400 });
     }
 
-    if (!profile.email_verified) {
-      return NextResponse.json({ error: "Email not verified. Please verify your email to create a ride." }, { status: 403 });
-    }
-
+    // Matching starts the moment the host completes registration, whether
+    // their email is verified yet or not (manual-verification signups still
+    // get matched right away) - email verification is a separate trust gate
+    // elsewhere, not a precondition for finding candidates.
     console.log(`[Template API] Fetched Host coordinates from profiles table`);
 
     // 2. Get Route Geometry - use passed geometry or fetch from OSRM

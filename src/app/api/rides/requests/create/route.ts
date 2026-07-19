@@ -79,10 +79,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Profile coordinates missing" }, { status: 400 });
     }
 
-    if (!profile.email_verified) {
-      return NextResponse.json({ error: "Email not verified. Please verify your email to request a ride." }, { status: 403 });
-    }
-
+    // Matching starts the moment the rider completes registration, whether
+    // their email is verified yet or not (manual-verification signups still
+    // get matched right away) - email verification is a separate trust gate
+    // elsewhere, not a precondition for finding candidates.
     console.log(`[Request API] Fetched Rider coordinates from profiles table`);
 
     // 2. Check for existing active ride_request (prevent duplicates)

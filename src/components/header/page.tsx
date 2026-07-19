@@ -253,11 +253,15 @@ export default function Header() {
                     </div>
                   )}
                   {!user && (
-                    <div className="flex items-center gap-1.5 mt-3 px-2.5 py-1 bg-amber-50 rounded-full w-fit">
+                    <Link
+                      href="/login"
+                      onClick={() => setDropdownOpen(false)}
+                      className="flex items-center gap-1.5 mt-3 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 rounded-full w-fit transition-colors"
+                    >
                       <span className="text-xs text-amber-700 font-medium">
                         Sign in to verify
                       </span>
-                    </div>
+                    </Link>
                   )}
                 </div>
 
