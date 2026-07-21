@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
           )
         )
       `)
-      .eq("status", "active")
+      .in("status", ["active", "dissolved"])
       .order("created_at", { ascending: false });
 
     console.log(`API [admin/pods] Pods query completed. Error: ${podsError ? podsError.message : 'none'}, Count: ${pods?.length || 0}`);
@@ -84,6 +84,7 @@ export async function GET(request: NextRequest) {
           phone_number: member.profiles?.phone_number,
           pickup_location: member.ride_requests?.pickup_location || "N/A",
           status: member.status,
+          leave_reason: member.leave_reason,
           joined_at: member.joined_at,
           rider_confirmed_at: member.rider_confirmed_at,
         })),

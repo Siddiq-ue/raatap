@@ -7,6 +7,8 @@ import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 import LocationInput from "@/components/LocationInput";
 import RouteSelector from "@/components/RouteSelector";
+import SocialProof from "@/components/SocialProof";
+import ProfileEditor from "@/components/ProfileEditor";
 
 interface FormData {
   // Step 1 fields
@@ -88,6 +90,7 @@ export default function DashboardContent() {
   const [currentStep, setCurrentStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isEditingLocation, setIsEditingLocation] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   const [matchSuggestions, setMatchSuggestions] = useState<any[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
@@ -2093,15 +2096,29 @@ export default function DashboardContent() {
                 </div>
               </div>
             )}           {matchSuggestions.length > 0 && (!confirmedPods?.rider_rides?.length) && (
-            <MatchQueue
-              matchSuggestions={matchSuggestions}
-              onAcceptMatch={handleAcceptMatch}
-              onSkipMatch={handleSkipMatch}
-              onConfirmMatch={handleConfirmMatch}
-              onRejectMatch={handleRejectMatch}
-              onChangeLocation={handleChangeLocation}
-              user={user}
-            />
+            <>
+              <div className="flex items-center justify-end mb-2 px-1">
+                <button
+                  onClick={() => setIsEditingProfile(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-[#6675FF] bg-[#6675FF]/10 rounded-lg hover:bg-[#6675FF]/20 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                  Edit Profile
+                </button>
+              </div>
+              <MatchQueue
+                matchSuggestions={matchSuggestions}
+                onAcceptMatch={handleAcceptMatch}
+                onSkipMatch={handleSkipMatch}
+                onConfirmMatch={handleConfirmMatch}
+                onRejectMatch={handleRejectMatch}
+                onChangeLocation={handleChangeLocation}
+                user={user}
+              />
+              <div className="mt-4 flex justify-center">
+                <SocialProof userId={user?.id} variant="compact" />
+              </div>
+            </>
           )}
 
           {/* Leave Pod Modal */}
@@ -2266,18 +2283,84 @@ export default function DashboardContent() {
               <h1 className="text-2xl font-semibold text-[#171717] mb-3">
                 We are matching you up
               </h1>
-              <p className="text-gray-500 mb-6">
+              <p className="text-gray-500 mb-4">
                 Thanks for verifying, {formData.full_name}! We&apos;re currently looking for the best riders for your route.
               </p>
-              <div className="inline-flex items-center gap-2 px-4 py-2 bg-[#6675FF]/10 text-[#6675FF] rounded-full text-sm font-medium">
+              <div className="inline-flex items-center gap-2 px-4 py-2 bg-[#6675FF]/10 text-[#6675FF] rounded-full text-sm font-medium mb-6">
                 <span className="relative flex h-3 w-3">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#8892ff] opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-3 w-3 bg-[#6675FF]"></span>
                 </span>
                 Searching for riders...
               </div>
+
+              {/* Social Proof */}
+              <div className="mt-4">
+                <SocialProof userId={user?.id} variant="full" />
+              </div>
+
+              {/* Edit Profile button */}
+              <button
+                onClick={() => setIsEditingProfile(true)}
+                className="mt-6 inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                Edit Profile
+              </button>
             </div>
           )}
+          {/* Profile Editor Modal */}
+          <ProfileEditor
+            isOpen={isEditingProfile}
+            onClose={() => setIsEditingProfile(false)}
+            userId={user?.id || ''}
+            profileData={formData}
+            isInPod={!!(confirmedPods?.rider_rides?.length || confirmedPods?.host_pods?.length)}
+            onProfileUpdated={async (updatedProfile) => {
+              loadProfileIntoFormData(updatedProfile);
+              // Re-fetch match suggestions with updated profile
+              if (user?.id) {
+                try {
+                  const suggestionsResponse = await fetch('/api/matches/suggestions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: user.id }),
+                  });
+                  if (suggestionsResponse.ok) {
+                    setMatchSuggestions(await suggestionsResponse.json());
+                  }
+                } catch (e) {
+                  console.error('Error refreshing suggestions:', e);
+                }
+              }
+              showNotification('success', 'Profile updated successfully!');
+            }}
+            onPodLeft={async () => {
+              setConfirmedPods(null);
+              if (user?.id) {
+                const podData = await fetchConfirmedPods(user.id);
+                setConfirmedPods(podData);
+                // Re-fetch suggestions since rider is back in matching
+                const suggestionsResponse = await fetch('/api/matches/suggestions', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ userId: user.id }),
+                });
+                if (suggestionsResponse.ok) {
+                  setMatchSuggestions(await suggestionsResponse.json());
+                }
+              }
+              showNotification('info', 'You have left your pod and will be re-matched.');
+            }}
+            onPodDisbanded={async () => {
+              setConfirmedPods(null);
+              if (user?.id) {
+                const podData = await fetchConfirmedPods(user.id);
+                setConfirmedPods(podData);
+              }
+              showNotification('info', 'Your pod has been disbanded. All riders will be re-matched.');
+            }}
+          />
         </div>
       </main>
     );

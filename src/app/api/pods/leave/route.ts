@@ -12,7 +12,7 @@ const supabase = createClient(
  * Request body: {
  *   podMemberId: string,      // pod_members record id
  *   userId: string,          // rider's profile id
- *   reason: string,          // 'schedule_conflict' | 'host_no_show' | 'host_behavior' | 'other'
+ *   reason: string,          // 'schedule_conflict' | 'host_no_show' | 'host_behavior' | 'profile_changed' | 'other'
  *   willingToRejoin: boolean  // whether rider is willing to join this pod again
  * }
  */

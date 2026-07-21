@@ -10,6 +10,7 @@ interface PodMember {
   status: string;
   joined_at: string;
   rider_confirmed_at: string | null;
+  leave_reason?: string;
 }
 
 interface Pod {
@@ -40,6 +41,7 @@ export default function AdminPodsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [expandedPod, setExpandedPod] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"active" | "dissolved">("active");
 
   const fetchPods = useCallback(async () => {
     setLoading(true);
@@ -58,7 +60,12 @@ export default function AdminPodsPage() {
     fetchPods();
   }, [fetchPods]);
 
-  const filtered = pods.filter((pod) =>
+  const activePods = pods.filter((pod) => pod.status === "active");
+  const dissolvedPods = pods.filter((pod) => pod.status === "dissolved");
+
+  const displayPods = activeTab === "active" ? activePods : dissolvedPods;
+
+  const filtered = displayPods.filter((pod) =>
     !search ||
     pod.host_name?.toLowerCase().includes(search.toLowerCase()) ||
     pod.host_phone?.includes(search) ||
@@ -73,7 +80,22 @@ export default function AdminPodsPage() {
       case "pending_rider": return "bg-amber-100 text-amber-700";
       case "dismissed": return "bg-red-100 text-red-700";
       case "left": return "bg-gray-100 text-gray-600";
+      case "dissolved": return "bg-red-50 text-red-600";
       default: return "bg-gray-100 text-gray-600";
+    }
+  };
+
+  const getLeaveReasonLabel = (reason: string) => {
+    switch (reason) {
+      case "profile_changed": return "Profile changed";
+      case "host_profile_changed": return "Host profile changed";
+      case "schedule_conflict": return "Schedule conflict";
+      case "host_no_show": return "Host no-show";
+      case "host_behavior": return "Host behavior";
+      case "rider_no_show": return "Rider no-show";
+      case "rider_behavior": return "Rider behavior";
+      case "seat_unavailable": return "Seat unavailable";
+      default: return reason || "Unknown";
     }
   };
 
@@ -86,7 +108,45 @@ export default function AdminPodsPage() {
       <div className="max-w-7xl mx-auto">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-gray-800">Ride Pods</h1>
-          <p className="text-gray-500 mt-1">Browse active ride-sharing pods and their members</p>
+          <p className="text-gray-500 mt-1">Browse ride-sharing pods and their members</p>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex items-center gap-2 mb-6">
+          <button
+            onClick={() => setActiveTab("active")}
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+              activeTab === "active"
+                ? "bg-[#6675FF] text-white shadow-lg shadow-[#6675FF]/30"
+                : "bg-white text-gray-600 border border-gray-200 hover:border-[#6675FF]/30"
+            }`}
+          >
+            Active Pods
+            {!loading && (
+              <span className={`ml-2 px-1.5 py-0.5 rounded-full text-xs ${
+                activeTab === "active" ? "bg-white/20" : "bg-gray-100"
+              }`}>
+                {activePods.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab("dissolved")}
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+              activeTab === "dissolved"
+                ? "bg-red-500 text-white shadow-lg shadow-red-500/30"
+                : "bg-white text-gray-600 border border-gray-200 hover:border-red-300"
+            }`}
+          >
+            Dissolved Pods
+            {!loading && (
+              <span className={`ml-2 px-1.5 py-0.5 rounded-full text-xs ${
+                activeTab === "dissolved" ? "bg-white/20" : "bg-gray-100"
+              }`}>
+                {dissolvedPods.length}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Search */}
@@ -121,13 +181,19 @@ export default function AdminPodsPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </div>
-            <p className="text-gray-500 font-medium">No pods found</p>
-            <p className="text-gray-400 text-sm mt-1">Try adjusting your search</p>
+            <p className="text-gray-500 font-medium">
+              {activeTab === "active" ? "No active pods found" : "No dissolved pods found"}
+            </p>
+            <p className="text-gray-400 text-sm mt-1">
+              {activeTab === "active" ? "Try adjusting your search" : "Dissolved pods will appear here when a host changes their profile"}
+            </p>
           </div>
         ) : (
           <div className="space-y-4">
             {filtered.map((pod) => (
-              <div key={pod.id} className="bg-white rounded-2xl border border-gray-100 overflow-hidden hover:shadow-md transition-shadow">
+              <div key={pod.id} className={`bg-white rounded-2xl border overflow-hidden hover:shadow-md transition-shadow ${
+                pod.status === "dissolved" ? "border-red-100" : "border-gray-100"
+              }`}>
                 {/* Pod Header */}
                 <div
                   className="p-5 cursor-pointer"
@@ -138,6 +204,11 @@ export default function AdminPodsPage() {
                       <div className="flex items-center gap-3 mb-2">
                         <h3 className="text-lg font-semibold text-gray-800">{pod.host_name}</h3>
                         <span className="text-xs text-gray-400">{getVehicleIcon(pod.vehicle_type)} {pod.vehicle_type.replace("_", " ")}</span>
+                        {pod.status === "dissolved" && (
+                          <span className="px-2 py-0.5 text-xs font-medium bg-red-50 text-red-600 rounded-full">
+                            Dissolved
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
                         <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -166,7 +237,7 @@ export default function AdminPodsPage() {
                 {/* Expanded Members */}
                 {expandedPod === pod.id && (
                   <div className="border-t border-gray-100">
-                    <div className="px-5 py-3 bg-gray-50/50 flex items-center gap-3 text-xs text-gray-500">
+                    <div className="px-5 py-3 bg-gray-50/50 flex items-center gap-3 text-xs text-gray-500 flex-wrap">
                       <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full">{pod.member_counts.active} active</span>
                       <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">{pod.member_counts.pending_host} pending host</span>
                       <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">{pod.member_counts.pending_rider} pending rider</span>
@@ -182,6 +253,9 @@ export default function AdminPodsPage() {
                               <th className="text-left px-5 py-3 font-semibold text-gray-600">Phone</th>
                               <th className="text-left px-5 py-3 font-semibold text-gray-600">Pickup</th>
                               <th className="text-left px-5 py-3 font-semibold text-gray-600">Status</th>
+                              {pod.status === "dissolved" && (
+                                <th className="text-left px-5 py-3 font-semibold text-gray-600">Reason</th>
+                              )}
                               <th className="text-left px-5 py-3 font-semibold text-gray-600">Joined</th>
                             </tr>
                           </thead>
@@ -196,6 +270,13 @@ export default function AdminPodsPage() {
                                     {member.status.replace("_", " ")}
                                   </span>
                                 </td>
+                                {pod.status === "dissolved" && (
+                                  <td className="px-5 py-3">
+                                    <span className="text-xs text-gray-500">
+                                      {getLeaveReasonLabel(member.leave_reason || "")}
+                                    </span>
+                                  </td>
+                                )}
                                 <td className="px-5 py-3 text-gray-500 text-xs">
                                   {new Date(member.joined_at).toLocaleDateString()}
                                 </td>
